@@ -1,0 +1,133 @@
+name: Publish SPS Static Registry
+
+# Copy this file into .github/workflows/ of the SPS repository that owns the
+# Registry. It is intentionally manual: a Registry release is a signed,
+# immutable publication action, never a push-triggered side effect.
+on:
+  workflow_dispatch:
+    inputs:
+      plugin_source:
+        description: Plugin source directory, relative to the repository root
+        required: true
+      registry_directory:
+        description: Static Registry directory, relative to the repository root
+        required: true
+      registry_id:
+        description: Stable Registry identifier, for example io.example.registry
+        required: true
+      registry_display_name:
+        description: Human readable Registry name
+        required: true
+      publisher_id:
+        description: Stable publisher identifier
+        required: true
+      publisher_key_id:
+        description: Ed25519 publisher key identifier
+        required: true
+      registry_root_key_id:
+        description: Ed25519 Registry root key identifier
+        required: true
+      catalog_name:
+        description: Optional catalog display name for this release
+        required: false
+      summary:
+        description: Optional catalog summary for this release
+        required: false
+      documentation_url:
+        description: Optional HTTPS documentation URL for this release
+        required: false
+      publisher_name:
+        description: Optional publisher display name
+        required: false
+      publisher_url:
+        description: Optional HTTPS publisher website URL
+        required: false
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    name: Sign and publish one immutable Registry release
+    runs-on: ubuntu-latest
+    env:
+      PLUGIN_SOURCE: ${{ inputs.plugin_source }}
+      REGISTRY_DIRECTORY: ${{ inputs.registry_directory }}
+      REGISTRY_ID: ${{ inputs.registry_id }}
+      REGISTRY_DISPLAY_NAME: ${{ inputs.registry_display_name }}
+      PUBLISHER_ID: ${{ inputs.publisher_id }}
+      PUBLISHER_KEY_ID: ${{ inputs.publisher_key_id }}
+      REGISTRY_ROOT_KEY_ID: ${{ inputs.registry_root_key_id }}
+      CATALOG_NAME: ${{ inputs.catalog_name }}
+      SUMMARY: ${{ inputs.summary }}
+      DOCUMENTATION_URL: ${{ inputs.documentation_url }}
+      PUBLISHER_NAME: ${{ inputs.publisher_name }}
+      PUBLISHER_URL: ${{ inputs.publisher_url }}
+      SPS_REGISTRY_PUBLISHER_PRIVATE_KEY: ${{ secrets.SPS_REGISTRY_PUBLISHER_PRIVATE_KEY }}
+      SPS_REGISTRY_ROOT_PRIVATE_KEY: ${{ secrets.SPS_REGISTRY_ROOT_PRIVATE_KEY }}
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Validate signing secrets
+        shell: bash
+        run: |
+          test -n "$SPS_REGISTRY_PUBLISHER_PRIVATE_KEY" || { echo "Missing SPS_REGISTRY_PUBLISHER_PRIVATE_KEY."; exit 1; }
+          test -n "$SPS_REGISTRY_ROOT_PRIVATE_KEY" || { echo "Missing SPS_REGISTRY_ROOT_PRIVATE_KEY."; exit 1; }
+
+      - name: Install SPS Plugin Kit
+        working-directory: .
+        run: npm ci
+
+      - name: Sign and write the immutable release
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          publisher_key="$RUNNER_TEMP/sps-publisher-private.pem"
+          root_key="$RUNNER_TEMP/sps-registry-root-private.pem"
+          printf '%s' "$SPS_REGISTRY_PUBLISHER_PRIVATE_KEY" > "$publisher_key"
+          printf '%s' "$SPS_REGISTRY_ROOT_PRIVATE_KEY" > "$root_key"
+
+          args=(
+            publish-local "$PLUGIN_SOURCE"
+            --registry "$REGISTRY_DIRECTORY"
+            --registry-id "$REGISTRY_ID"
+            --display-name "$REGISTRY_DISPLAY_NAME"
+            --publisher-id "$PUBLISHER_ID"
+            --publisher-key-id "$PUBLISHER_KEY_ID"
+            --publisher-private-key "$publisher_key"
+            --root-key-id "$REGISTRY_ROOT_KEY_ID"
+            --root-private-key "$root_key"
+          )
+          [[ -z "$CATALOG_NAME" ]] || args+=(--catalog-name "$CATALOG_NAME")
+          [[ -z "$SUMMARY" ]] || args+=(--summary "$SUMMARY")
+          [[ -z "$DOCUMENTATION_URL" ]] || args+=(--docs-url "$DOCUMENTATION_URL")
+          [[ -z "$PUBLISHER_NAME" ]] || args+=(--publisher-name "$PUBLISHER_NAME")
+          [[ -z "$PUBLISHER_URL" ]] || args+=(--publisher-url "$PUBLISHER_URL")
+
+          node cli/sps-plugin.mjs "${args[@]}" | tee "$RUNNER_TEMP/sps-registry-release.json"
+          node cli/sps-plugin.mjs inspect "$REGISTRY_DIRECTORY" | tee "$RUNNER_TEMP/sps-registry-inspect.json"
+          echo "Registry root public key (copy this once into the SPS Desktop source configuration):" >> "$GITHUB_STEP_SUMMARY"
+          node --input-type=module -e 'import { readFile } from "node:fs/promises"; const release = JSON.parse(await readFile(process.argv[1], "utf8")); console.log(`\`${release.registry.rootKeyId}\`\n\n\`\`\`text\n${release.registry.rootPublicKey}\n\`\`\``);' "$RUNNER_TEMP/sps-registry-release.json" >> "$GITHUB_STEP_SUMMARY"
+          rm -f "$publisher_key" "$root_key"
+
+      - name: Commit Registry files
+        shell: bash
+        run: |
+          set -euo pipefail
+          git add -- "$REGISTRY_DIRECTORY"
+          if git diff --cached --quiet; then
+            echo "No Registry files changed." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          git config user.name "sps-registry-bot[bot]"
+          git config user.email "sps-registry-bot[bot]@users.noreply.github.com"
+          git commit -m "release: publish signed SPS plugin"
+          git push

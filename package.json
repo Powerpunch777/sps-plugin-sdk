@@ -1,0 +1,36 @@
+{
+  "name": "@sonparkserver/plugin-sdk",
+  "private": false,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Public SDK, CLI, and conformance tools for SPS plugins.",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Powerpunch777/sps-plugin-sdk.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Powerpunch777/sps-plugin-sdk/issues"
+  },
+  "homepage": "https://github.com/Powerpunch777/sps-plugin-sdk#readme",
+  "exports": {
+    "./profile/*": "./profile/*",
+    "./registry/*": "./registry/*",
+    "./authoring/*": "./authoring/*"
+  },
+  "bin": {
+    "sps-plugin": "./cli/sps-plugin.mjs"
+  },
+  "scripts": {
+    "test": "node --test profile/extension-profile-v1.test.mjs registry/release-record-v1.test.mjs registry/local-registry-v1.test.mjs registry/archive-inspector-v1.test.mjs registry/source-trust-v1.test.mjs registry/package-extractor-v1.test.mjs registry/static-package-manifest-v1.test.mjs authoring/plugin-package-v1.test.mjs cli/sps-plugin.test.mjs templates/github-static-registry-publish.test.mjs",
+    "check": "npm run test"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "yauzl": "3.4.0",
+    "yazl": "3.3.1"
+  },
+  "devDependencies": {}
+}
