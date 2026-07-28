@@ -72,6 +72,15 @@ export function inspectSpsExtensionProfile(manifest) {
     errors.push("Manifest must declare a worker entrypoint.");
   }
 
+  if (manifest.companyActivation !== undefined) {
+    const activation = manifest.companyActivation;
+    if (!activation || typeof activation !== "object" || Array.isArray(activation)) {
+      errors.push("companyActivation must be an object when declared.");
+    } else if (activation.defaultEnabled !== undefined && typeof activation.defaultEnabled !== "boolean") {
+      errors.push("companyActivation.defaultEnabled must be a boolean when declared.");
+    }
+  }
+
   if (tools.length > 0) {
     features.push("tool");
     if (!hasCapability(capabilities, "agent.tools.register")) {

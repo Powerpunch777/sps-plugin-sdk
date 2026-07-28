@@ -81,6 +81,31 @@ test("accepts a tool provider without implying a workplane or access policy", ()
   assert.deepEqual(result.features, ["tool"]);
 });
 
+test("accepts a Company activation policy without treating it as a workplane contract", () => {
+  const result = inspectSpsExtensionProfile({
+    id: "com.example.optional-surface",
+    version: "1.0.0",
+    entrypoints: { worker: "./dist/worker.js" },
+    capabilities: [],
+    companyActivation: { defaultEnabled: false },
+  });
+
+  assert.equal(result.valid, true, result.errors.join("\n"));
+});
+
+test("rejects a malformed Company activation policy", () => {
+  const result = inspectSpsExtensionProfile({
+    id: "com.example.invalid-activation",
+    version: "1.0.0",
+    entrypoints: { worker: "./dist/worker.js" },
+    capabilities: [],
+    companyActivation: { defaultEnabled: "yes" },
+  });
+
+  assert.equal(result.valid, false);
+  assert.ok(result.errors.includes("companyActivation.defaultEnabled must be a boolean when declared."));
+});
+
 test("rejects a tool provider without a declared tool", () => {
   const result = inspectSpsExtensionProfile({
     id: "com.example.empty-tool-provider",
