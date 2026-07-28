@@ -30,7 +30,7 @@ function makeRecord(overrides = {}) {
     },
     publisher: { id: "example-studio", keyId: "ed25519:example-1" },
     signature: { algorithm: "ed25519", value: "pending" },
-    compatibility: { sps: ">=0.1.0 <1.0.0", pluginApi: 1 },
+    compatibility: { sps: ">=0.1.0 <1.0.0", pluginApi: 1, extensionProfile: "1.0" },
     visibility: "public",
     permissionsDigest: "b".repeat(64),
     publishedAt: "2026-07-23T00:00:00.000Z",
@@ -45,6 +45,16 @@ test("validates and verifies a signed immutable release record", () => {
 
   assert.deepEqual(validateReleaseRecord(record), { valid: true, errors: [] });
   assert.deepEqual(verifyReleaseRecordSignature(record, publisherPublicKey), { valid: true, errors: [] });
+});
+
+test("requires a signed SPS extension profile declaration", () => {
+  const record = makeRecord({
+    compatibility: { sps: ">=0.4.0 <0.5.0", pluginApi: 1 },
+  });
+
+  const validation = validateReleaseRecord(record);
+  assert.equal(validation.valid, false);
+  assert.ok(validation.errors.includes("compatibility.extensionProfile must be a major.minor version."));
 });
 
 test("rejects a release record when a signed field changes", () => {

@@ -60,6 +60,7 @@ test("creates a source tree whose static manifest can be packaged without import
     description: "Generated SPS Plugin.",
     author: "SPS Plugin Author",
     categories: ["automation"],
+    minimumHostVersion: "0.4.0",
     capabilities: ["plugin.state.read"],
     entrypoints: { worker: "./dist/worker.js" },
   });
@@ -69,6 +70,27 @@ test("creates a source tree whose static manifest can be packaged without import
   });
   assert.equal(archive.archive.valid, true);
   assert.equal(archive.archive.package.staticManifest.plugin.id, "com.example.weather");
+});
+
+test("refuses to publish a release whose declared plugin API differs from its package", async (t) => {
+  const { root, sourceDirectory } = await makePlugin(t);
+  const keys = generatePluginSigningKeyPair();
+  const archive = await packagePluginDirectory({
+    sourceDirectory,
+    archivePath: path.join(root, "weather.spsplugin"),
+  });
+
+  await assert.rejects(
+    () => createSignedPluginRelease({
+      archivePath: archive.archivePath,
+      artifactUrl: "packages/weather.spsplugin",
+      publisherId: "example-studio",
+      publisherKeyId: "ed25519:example-studio",
+      publisherPrivateKey: keys.privateKey,
+      pluginApi: 2,
+    }),
+    /must match the packaged plugin API version/,
+  );
 });
 
 test("keeps the generated worker alive for the minimum Host RPC lifecycle", async (t) => {

@@ -292,8 +292,9 @@ export async function createSignedPluginRelease({
   publisherId,
   publisherKeyId,
   publisherPrivateKey,
-  compatibilitySps = ">=0.4.0",
+  compatibilitySps = ">=0.4.0 <0.5.0",
   pluginApi = 1,
+  extensionProfile = "1.0",
   visibility = "public",
   catalog,
   publishedAt = new Date().toISOString(),
@@ -306,13 +307,16 @@ export async function createSignedPluginRelease({
   if (!archive.valid || !archive.package?.staticManifest) throw new Error(archive.errors.join("\n"));
   const artifact = await fs.readFile(archivePath);
   const staticManifest = archive.package.staticManifest;
+  if (pluginApi !== Number(staticManifest.plugin.apiVersion)) {
+    throw new Error("Release compatibility pluginApi must match the packaged plugin API version.");
+  }
   const record = {
     registrySchemaVersion: 1,
     plugin: { id: staticManifest.plugin.id, version: staticManifest.plugin.version },
     artifact: { url: artifactUrl, sha256: sha256(artifact), sizeBytes: artifact.length },
     publisher: { id: publisherId, keyId: publisherKeyId },
     signature: { algorithm: "ed25519", value: "" },
-    compatibility: { sps: compatibilitySps, pluginApi },
+    compatibility: { sps: compatibilitySps, pluginApi, extensionProfile },
     visibility,
     ...(catalog === undefined ? {} : { catalog }),
     capabilities: [...staticManifest.capabilities],
@@ -444,7 +448,8 @@ export async function publishPluginToLocalRegistry({
   publisherPrivateKey,
   registryRootKeyId,
   registryRootPrivateKey,
-  compatibilitySps = ">=0.4.0",
+  compatibilitySps = ">=0.4.0 <0.5.0",
+  extensionProfile = "1.0",
   visibility = "public",
   catalog,
   publisherProfile,
@@ -513,6 +518,7 @@ export async function publishPluginToLocalRegistry({
       publisherKeyId,
       publisherPrivateKey,
       compatibilitySps,
+      extensionProfile,
       visibility,
       catalog,
       publishedAt,
@@ -571,6 +577,7 @@ export async function createPluginTemplate({ directory, pluginId, packageName, d
     "  description: \"Generated SPS Plugin.\",",
     "  author: \"SPS Plugin Author\",",
     "  categories: [\"automation\"],",
+    "  minimumHostVersion: \"0.4.0\",",
     '  capabilities: ["plugin.state.read"],',
     "  entrypoints: { worker: \"./dist/worker.js\" },",
     "};",

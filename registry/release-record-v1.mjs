@@ -7,6 +7,7 @@ const PLUGIN_ID = /^[a-z0-9][a-z0-9.-]{2,127}$/;
 const PUBLISHER_ID = /^[a-z0-9][a-z0-9._-]{1,127}$/;
 const SHA256 = /^[a-f0-9]{64}$/;
 const SEMVER = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
+const EXTENSION_PROFILE_VERSION = /^\d+\.\d+$/;
 const VISIBILITY = new Set(["public", "unlisted", "private"]);
 const MAX_CATALOG_NAME_LENGTH = 120;
 const MAX_CATALOG_SUMMARY_LENGTH = 600;
@@ -195,6 +196,7 @@ export function validateReleaseRecord(record) {
   pushIf(isPlainObject(record.compatibility), errors, "compatibility must be an object.");
   pushIf(typeof record.compatibility?.sps === "string" && record.compatibility.sps.length > 0 && record.compatibility.sps.length <= 256, errors, "compatibility.sps is required.");
   pushIf(Number.isSafeInteger(record.compatibility?.pluginApi) && record.compatibility.pluginApi >= 1 && record.compatibility.pluginApi <= 100, errors, "compatibility.pluginApi must be a positive integer.");
+  pushIf(EXTENSION_PROFILE_VERSION.test(record.compatibility?.extensionProfile ?? ""), errors, "compatibility.extensionProfile must be a major.minor version.");
   pushIf(VISIBILITY.has(record.visibility), errors, "visibility must be public, unlisted, or private.");
   if (record.catalog !== undefined) {
     pushIf(isPlainObject(record.catalog), errors, "catalog must be an object when present.");
