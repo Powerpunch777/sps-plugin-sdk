@@ -126,6 +126,13 @@ export function inspectSpsExtensionProfile(manifest) {
       if (!extension.profileKey || typeof extension.profileKey !== "string") {
         errors.push("Workplane extensions require a stable profileKey.");
       }
+    } else if (extension.kind === "tool_provider") {
+      if (tools.length === 0) {
+        errors.push("Tool provider extensions require at least one tool declaration.");
+      }
+      if (!hasCapability(capabilities, "agent.tools.register")) {
+        errors.push("Tool provider extensions require agent.tools.register.");
+      }
     } else if (extension.kind === "store_provider") {
       if (!hasCapability(capabilities, "memory.providers.register")) {
         errors.push("Store provider extensions require memory.providers.register.");

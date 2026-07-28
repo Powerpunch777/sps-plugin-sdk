@@ -58,6 +58,42 @@ test("accepts an SPS-compatible memory store provider", () => {
   assert.deepEqual(result.features, ["tool", "automation"]);
 });
 
+test("accepts a tool provider without implying a workplane or access policy", () => {
+  const result = inspectSpsExtensionProfile({
+    id: "com.example.discovery",
+    version: "1.0.0",
+    entrypoints: { worker: "./dist/worker.js" },
+    capabilities: ["agent.tools.register"],
+    tools: [{ name: "search-extensions" }],
+    agentPlatform: {
+      contractVersion: "1.0",
+      kind: "tool_provider",
+      profileKey: "example-discovery",
+    },
+  });
+
+  assert.equal(result.valid, true, result.errors.join("\n"));
+  assert.deepEqual(result.extension, {
+    contractVersion: "1.0",
+    kind: "tool_provider",
+    profileKey: "example-discovery",
+  });
+  assert.deepEqual(result.features, ["tool"]);
+});
+
+test("rejects a tool provider without a declared tool", () => {
+  const result = inspectSpsExtensionProfile({
+    id: "com.example.empty-tool-provider",
+    version: "1.0.0",
+    entrypoints: { worker: "./dist/worker.js" },
+    capabilities: ["agent.tools.register"],
+    agentPlatform: { contractVersion: "1.0", kind: "tool_provider" },
+  });
+
+  assert.equal(result.valid, false);
+  assert.ok(result.errors.includes("Tool provider extensions require at least one tool declaration."));
+});
+
 test("reports legacy-compatible manifests without rejecting them", async () => {
   const result = inspectSpsExtensionProfile({
     id: "com.example.legacy",
