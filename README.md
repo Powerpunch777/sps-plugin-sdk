@@ -1,6 +1,6 @@
 # SPS Plugin SDK
 
-SPS Plugin SDK는 외부 개발자가 SPS용 플러그인을 만들기 위한 공개 도구 모음이다. SPS Desktop, Owner Host, 권한 판단, 사용자 데이터, 실행 Node의 제품 소스는 포함하지 않는다.
+SPS Plugin SDK는 외부 개발자가 SPS용 플러그인을 만들기 위한 공개 도구 모음이다. SPS Desktop, Host runtime, 사람 권한 정책, 사용자 데이터, 실행 Node의 제품 소스는 포함하지 않는다.
 
 ## 포함하는 것
 
@@ -13,12 +13,12 @@ SPS Plugin SDK는 외부 개발자가 SPS용 플러그인을 만들기 위한 �
 
 ## 포함하지 않는 것
 
-- SPS Core, Desktop, Owner Host, Node의 구현 코드
+- SPS Core, Desktop, Host runtime, Node의 구현 코드
 - 사용자 프로젝트, Room, Task, 장기기억 또는 API 키
 - SPS 공식 Registry 개인 키와 공식 플러그인 코드
 - 플러그인의 자동 설치·자동 활성화 권한
 
-플러그인은 선언된 capability를 가진 package일 뿐이다. 실제 설치는 SPS Owner가 source, 서명, version, 호환성, 권한을 검토하고 disabled stage에서 명시적으로 enable할 때만 일어난다.
+플러그인은 선언된 capability를 가진 package일 뿐이다. Catalog에서 항목을 선택하거나 Agent가 추천하는 일만으로 설치·활성화가 일어나지 않는다. 실제 lifecycle 변경은 SPS 제품이 제공하는 명시적 동작과 해당 Company에 활성화된 정책 플러그인에 따른다.
 
 ## 빠른 시작
 
@@ -45,7 +45,7 @@ Plugin author는 자신의 플러그인 코드와 라이선스를 소유한다. 
 
 - 개인 키, `.env`, credential 파일을 package나 Git에 넣지 마세요.
 - `publish-local`과 static Registry template은 release와 index를 따로 서명합니다.
-- Registry나 catalog 정보는 설치·실행 권한을 부여하지 않습니다.
+- Registry나 catalog 정보는 자동 설치·실행·사람 권한을 부여하지 않습니다.
 - 취약점은 공개 Issue에 올리지 말고 [SECURITY.md](SECURITY.md)의 절차를 따르세요.
 
 ## 피드백과 기여
