@@ -1,28 +1,29 @@
-# SPS Extension Profile v1
+# SPS Extension Profile
 
-이 디렉터리는 Core plugin SDK 위에서 SPS 플러그인이 따르는 제품 수준 호환 표준의 첫 실행 가능한 검사기다. 새 runtime이나 새 권한 체계를 만들지 않는다.
+SPS Extension Profile은 Core plugin manifest 위에서 동작하는 공개 호환성
+검사 규격입니다. 이 규격은 새로운 실행 런타임이나 권한 체계를 만들지
+않습니다.
 
-## 검사 대상
+## v1
 
-| Profile 신호 | Core manifest 기준 | 검사 목적 |
-| --- | --- | --- |
-| Tool | `tools` + `agent.tools.register` | Agent 도구 등록 권한 확인 |
-| Surface | `ui.slots` + `ui.*.register` + UI entrypoint | UI 확장과 bundle 선언 일치 |
-| Automation | `jobs` + `jobs.schedule`, 또는 `events.subscribe` | background lifecycle 선언 확인 |
-| Integration | `apiRoutes` + `api.routes.register`, 또는 `http.outbound` | 외부·API 진입점 선언 확인 |
-| Workplane | `agentPlatform.kind=workplane` | Task·Agent Session 기반 작업 구조의 최소 capability 확인 |
-| Store Provider | `agentPlatform.kind=store_provider` + `memoryProvider` | Memory Provider의 Core 등록 경계 확인 |
+v1은 기존 SPS와 Paperclip 호환 플러그인을 검사합니다. 기존 플러그인을
+깨지 않기 위해 유지됩니다.
 
-## 의도적인 제한
+## v2
 
-- 이 검사는 구조적 conformance만 확인한다. 실제 권한 판정은 Core runtime이 한다.
-- 기존 플러그인은 `agentPlatform` 선언이 없어도 경고와 함께 호환 상태를 유지한다.
-- Registry·Official Extensions는 이 검사 결과만으로 플러그인을 신뢰하거나 자동 활성화하지 않는다.
+v2는 작업 방식과 독립적인 SPS Core 경계를 검사합니다.
+
+- Host가 관리하는 Workspace Source의 메타데이터와 연결 경로
+- 이 컴퓨터나 승인된 Node에 공개된 Runtime 목록과 실행 요청
+- Run 상태 확인, Artifact 작성, Secret 참조
+
+v2는 Task, Room, 역할 체계, 승인 절차, 장기기억 방식을 정의하지
+않습니다. 이런 업무 의미는 플러그인이 정의합니다. Manifest에 적힌
+선언만으로는 플러그인이 설치되거나 활성화되지 않으며, Host 폴더 경로,
+계정 자격 증명, Secret이 전달되지 않습니다.
 
 ## 실행
 
 ```powershell
-node --test .\profile\extension-profile-v1.test.mjs
+npm test
 ```
-
-다음 단계는 이 검사 결과를 Package validator와 Registry release inspection에 연결하는 것이다.
