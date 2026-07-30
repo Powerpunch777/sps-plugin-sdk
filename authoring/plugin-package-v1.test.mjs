@@ -62,6 +62,7 @@ test("creates a source tree whose static manifest can be packaged without import
     categories: ["automation"],
     minimumHostVersion: "0.4.0",
     capabilities: ["plugin.state.read"],
+    sps: { contractVersion: "2.0", primitives: [] },
     entrypoints: { worker: "./dist/worker.js" },
   });
   const archive = await packagePluginDirectory({
