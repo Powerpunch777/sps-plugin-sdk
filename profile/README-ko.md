@@ -1,28 +1,35 @@
-# SPS Extension Profile v1
+# SPS Extension Profile
 
-이 디렉터리는 Core plugin SDK 위에서 SPS 플러그인이 따르는 제품 수준 호환 표준의 첫 실행 가능한 검사기다. 새 runtime이나 새 권한 체계를 만들지 않는다.
+SPS Extension Profile은 플러그인 manifest가 SPS Core와 호환되는지 검사하는 공개
+규격이다. 이 규격은 특정 업무 방식, 사용자 권한 체계, 자동 설치 규칙을 만들지
+않는다.
 
-## 검사 대상
+## Profile 1.0
 
-| Profile 신호 | Core manifest 기준 | 검사 목적 |
-| --- | --- | --- |
-| Tool | `tools` + `agent.tools.register` | Agent 도구 등록 권한 확인 |
-| Surface | `ui.slots` + `ui.*.register` + UI entrypoint | UI 확장과 bundle 선언 일치 |
-| Automation | `jobs` + `jobs.schedule`, 또는 `events.subscribe` | background lifecycle 선언 확인 |
-| Integration | `apiRoutes` + `api.routes.register`, 또는 `http.outbound` | 외부·API 진입점 선언 확인 |
-| Workplane | `agentPlatform.kind=workplane` | Task·Agent Session 기반 작업 구조의 최소 capability 확인 |
-| Store Provider | `agentPlatform.kind=store_provider` + `memoryProvider` | Memory Provider의 Core 등록 경계 확인 |
+Profile 1.0은 기존 SPS/Paperclip 계열 플러그인을 위한 호환 경로다. 기존 패키지를
+옮길 때만 사용하고, 새 플러그인은 Profile 2.0을 사용한다.
 
-## 의도적인 제한
+## Profile 2.0
 
-- 이 검사는 구조적 conformance만 확인한다. 실제 권한 판정은 Core runtime이 한다.
-- 기존 플러그인은 `agentPlatform` 선언이 없어도 경고와 함께 호환 상태를 유지한다.
-- Registry·Official Extensions는 이 검사 결과만으로 플러그인을 신뢰하거나 자동 활성화하지 않는다.
+Profile 2.0은 업무 방식에 종속되지 않는 SPS Core 경계를 정의한다. 플러그인은 필요한
+기술 primitive만 선언할 수 있다.
 
-## 실행
+- Host가 관리하는 Workspace Source의 메타데이터와 보호된 route
+- 승인된 Node가 제공하는 Runtime 목록과 dispatch 요청
+- Run 상태 관찰, Artifact 작성, Secret reference
+
+Profile 2.0은 Task, Room, 역할 체계, 승인 절차, 장기기억 정책을 정의하지 않는다.
+그런 업무 의미는 Plugin이 직접 정의한다.
+
+Manifest 선언만으로는 Plugin 설치·활성화, Host 폴더 접근, 계정 자격 증명 전달,
+Secret 열람이 일어나지 않는다. Host가 SPS Desktop에서 명시적으로 신뢰, stage,
+Workspace 활성화를 결정해야 한다.
+
+## 검사
 
 ```powershell
-node --test .\profile\extension-profile-v1.test.mjs
+npm test
 ```
 
-다음 단계는 이 검사 결과를 Package validator와 Registry release inspection에 연결하는 것이다.
+`extension-profile-v2.mjs`는 정적 선언을 검사한다. 실제 실행 권한과 데이터 접근은
+SPS Core와 활성화된 Plugin의 별도 계약에서 다시 확인한다.
