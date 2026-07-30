@@ -31,8 +31,8 @@ async function run(command, args, cwd) {
 test("an external temporary project imports the packed public runtime facade", { timeout: 60_000 }, async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "sps-sdk-consumer-"));
   try {
-    const packed = JSON.parse(await run("npm", ["pack", "--json", "--ignore-scripts"], sdkRoot));
-    const tarball = path.join(sdkRoot, packed[0].filename);
+    const packed = JSON.parse(await run("npm", ["pack", "--json", "--ignore-scripts", "--pack-destination", root], sdkRoot));
+    const tarball = path.join(root, packed[0].filename);
     assert.ok(packed[0].files.some((file) => file.path === "runtime/index.mjs"));
     assert.ok(packed[0].files.some((file) => file.path === "runtime/index.d.ts"));
     await fs.writeFile(path.join(root, "package.json"), JSON.stringify({ name: "sps-sdk-consumer-smoke", private: true, type: "module" }));
@@ -63,7 +63,5 @@ test("an external temporary project imports the packed public runtime facade", {
     assert.ok(await fs.stat(path.join(root, "node_modules", "@sonparkserver", "plugin-sdk", "runtime", "index.mjs")));
   } finally {
     await fs.rm(root, { recursive: true, force: true });
-    const archives = await fs.readdir(sdkRoot);
-    await Promise.all(archives.filter((name) => /^sonparkserver-plugin-sdk-.*\.tgz$/.test(name)).map((name) => fs.rm(path.join(sdkRoot, name), { force: true })));
   }
 });

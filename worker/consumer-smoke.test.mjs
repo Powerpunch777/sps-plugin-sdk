@@ -24,8 +24,8 @@ async function run(command, args, cwd) {
 test("packed SDK starts an external Worker and cleanly completes the Host lifecycle on Windows", { timeout: 60_000 }, async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "sps-worker-consumer-"));
   try {
-    const packed = JSON.parse(await run("npm", ["pack", "--json", "--ignore-scripts"], sdkRoot));
-    const tarball = path.join(sdkRoot, packed[0].filename);
+    const packed = JSON.parse(await run("npm", ["pack", "--json", "--ignore-scripts", "--pack-destination", root], sdkRoot));
+    const tarball = path.join(root, packed[0].filename);
     assert.ok(packed[0].files.some((file) => file.path === "worker/index.mjs"));
     assert.ok(packed[0].files.some((file) => file.path === "worker/index.d.ts"));
     await fs.writeFile(path.join(root, "package.json"), JSON.stringify({ name: "worker-consumer", private: true, type: "module" }));
@@ -78,7 +78,5 @@ test("packed SDK starts an external Worker and cleanly completes the Host lifecy
     assert.equal(code, 0, stderr);
   } finally {
     await fs.rm(root, { recursive: true, force: true });
-    const files = await fs.readdir(sdkRoot);
-    await Promise.all(files.filter((name) => /^sonparkserver-plugin-sdk-.*\.tgz$/.test(name)).map((name) => fs.rm(path.join(sdkRoot, name), { force: true })));
   }
 });
