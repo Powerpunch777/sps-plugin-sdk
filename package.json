@@ -1,7 +1,7 @@
 {
   "name": "@sonparkserver/plugin-sdk",
   "private": false,
-  "version": "0.2.1",
+  "version": "0.3.0",
   "type": "module",
   "description": "Public SDK, CLI, and conformance tools for SPS plugins.",
   "license": "Apache-2.0",
@@ -14,23 +14,60 @@
   },
   "homepage": "https://github.com/Powerpunch777/sps-plugin-sdk#readme",
   "exports": {
+    "./runtime": {
+      "types": "./runtime/index.d.ts",
+      "import": "./runtime/index.mjs",
+      "default": "./runtime/index.mjs"
+    },
+    "./worker": {
+      "types": "./worker/index.d.ts",
+      "import": "./worker/index.mjs",
+      "default": "./worker/index.mjs"
+    },
+    "./platform": {
+      "types": "./platform/index.d.ts",
+      "import": "./platform/index.mjs",
+      "default": "./platform/index.mjs"
+    },
+    "./ui": {
+      "types": "./ui/index.d.ts",
+      "import": "./ui/index.mjs",
+      "default": "./ui/index.mjs"
+    },
+    "./ui/bridge": {
+      "types": "./ui/bridge.d.ts",
+      "import": "./ui/bridge.mjs",
+      "default": "./ui/bridge.mjs"
+    },
     "./profile/*": "./profile/*",
     "./registry/*": "./registry/*",
     "./authoring/*": "./authoring/*"
+  },
+  "typesVersions": {
+    "*": {
+      "runtime": ["runtime/index.d.ts"],
+      "worker": ["worker/index.d.ts"],
+      "platform": ["platform/index.d.ts"],
+      "ui": ["ui/index.d.ts"],
+      "ui/bridge": ["ui/bridge.d.ts"]
+    }
   },
   "bin": {
     "sps-plugin": "./cli/sps-plugin.mjs"
   },
   "scripts": {
-    "test": "node --test profile/extension-profile-v1.test.mjs profile/extension-profile-v2.test.mjs registry/release-record-v1.test.mjs registry/local-registry-v1.test.mjs registry/archive-inspector-v1.test.mjs registry/source-trust-v1.test.mjs registry/package-extractor-v1.test.mjs registry/static-package-manifest-v1.test.mjs authoring/plugin-package-v1.test.mjs cli/sps-plugin.test.mjs templates/github-static-registry-publish.test.mjs",
+    "test": "node --test profile/extension-profile-v1.test.mjs profile/extension-profile-v2.test.mjs runtime/index.test.mjs runtime/consumer-smoke.test.mjs worker/index.test.mjs worker/consumer-smoke.test.mjs platform/index.test.mjs ui/index.test.mjs ui/bridge.test.mjs registry/release-record-v1.test.mjs registry/local-registry-v1.test.mjs registry/archive-inspector-v1.test.mjs registry/source-trust-v1.test.mjs registry/package-extractor-v1.test.mjs registry/static-package-manifest-v1.test.mjs authoring/worker-bundle-v1.test.mjs authoring/plugin-package-v1.test.mjs cli/sps-plugin.test.mjs templates/github-static-registry-publish.test.mjs",
     "check": "npm run test"
   },
   "engines": {
     "node": ">=22"
   },
   "dependencies": {
+    "esbuild": "0.25.8",
     "yauzl": "3.4.0",
     "yazl": "3.3.1"
   },
-  "devDependencies": {}
+  "devDependencies": {
+    "typescript": "5.7.3"
+  }
 }

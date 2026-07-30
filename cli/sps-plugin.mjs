@@ -1,6 +1,9 @@
 #!/usr/bin/env node
 import { promises as fs } from "node:fs";
+import { spawn } from "node:child_process";
+import { once } from "node:events";
 import path from "node:path";
+import { createInterface } from "node:readline";
 import {
   createPluginTemplate,
   createSignedPluginRelease,
@@ -10,14 +13,18 @@ import {
   packagePluginDirectory,
   publishPluginToLocalRegistry,
 } from "../authoring/plugin-package-v1.mjs";
+import { buildPluginWorker } from "../authoring/worker-bundle-v1.mjs";
 import { inspectPluginArchive } from "../registry/archive-inspector-v1.mjs";
 import { inspectLocalRegistry } from "../registry/local-registry-v1.mjs";
+import { SPS_RUNTIME_OPERATIONS } from "../runtime/index.mjs";
 
 function usage() {
   return `SPS Plugin Kit
 
 Commands:
   sps-plugin init <directory> --id <plugin-id> --package <package-name> [--name <display-name>] [--version <semver>]
+  sps-plugin build <directory>
+  sps-plugin test <directory>
   sps-plugin validate <directory>
   sps-plugin inspect <plugin-directory|registry-directory|plugin.spsplugin>
   sps-plugin pack <directory> --out <plugin.spsplugin> [--overwrite]
@@ -124,6 +131,106 @@ function publisherProfileFromOptions(options) {
   return Object.keys(profile).length === 0 ? undefined : profile;
 }
 
+async function testPluginWorker(sourceDirectory) {
+  const root = path.resolve(sourceDirectory ?? "");
+  const workerPath = path.join(root, "dist", "worker.js");
+  const worker = spawn(process.execPath, [workerPath], { cwd: root, windowsHide: true, stdio: ["pipe", "pipe", "pipe"] });
+  const lines = createInterface({ input: worker.stdout, crlfDelay: Infinity });
+  const runtimeMethods = new Set(SPS_RUNTIME_OPERATIONS);
+  const messages = [];
+  let nextMessage;
+  let spawnError;
+  lines.on("line", (line) => {
+    try {
+      const message = JSON.parse(line);
+      if (nextMessage) {
+        const resolve = nextMessage;
+        nextMessage = null;
+        resolve(message);
+      } else messages.push(message);
+    } catch {
+      if (nextMessage) {
+        const reject = nextMessage.reject;
+        nextMessage = null;
+        reject(new Error("Worker emitted invalid JSON-RPC output."));
+      }
+    }
+  });
+  worker.once("error", (error) => {
+    spawnError = error;
+    if (nextMessage) {
+      const reject = nextMessage.reject;
+      nextMessage = null;
+      reject(error);
+    }
+  });
+  let stderr = "";
+  worker.stderr.setEncoding("utf8");
+  worker.stderr.on("data", (chunk) => { stderr += chunk; });
+  const receive = () => new Promise((resolve, reject) => {
+    if (spawnError) { reject(spawnError); return; }
+    if (messages.length > 0) { resolve(messages.shift()); return; }
+    const timer = setTimeout(() => {
+      if (nextMessage?.resolve === resolve) nextMessage = null;
+      reject(new Error("Worker conformance test timed out."));
+    }, 5_000);
+    const handler = (message) => { clearTimeout(timer); resolve(message); };
+    handler.resolve = resolve;
+    handler.reject = (error) => { clearTimeout(timer); reject(error); };
+    nextMessage = handler;
+  });
+  const send = (message) => {
+    if (spawnError) throw spawnError;
+    worker.stdin.write(`${JSON.stringify(message)}\n`);
+  };
+  const respondToRuntime = (request) => {
+    const isList = request.method === "sps.runtimes.list" || request.method === "sps.workspaceSources.list" || request.method === "sps.executionGrants.list" || request.method === "sps.runs.listEvents" || request.method === "sps.artifacts.list";
+    send(isList
+      ? { jsonrpc: "2.0", id: request.id, result: [] }
+      : { jsonrpc: "2.0", id: request.id, error: { code: -32003, message: "SPS CLI conformance fixture denies mutating Runtime requests." } });
+  };
+  const receiveLifecycle = async (id) => {
+    for (;;) {
+      const message = await receive();
+      if (message?.jsonrpc === "2.0" && runtimeMethods.has(message.method) && (typeof message.id === "string" || typeof message.id === "number")) {
+        respondToRuntime(message);
+        continue;
+      }
+      if (message?.id === id) return message;
+      throw new Error("Worker emitted an unexpected JSON-RPC message during lifecycle conformance.");
+    }
+  };
+  const overall = setTimeout(() => { if (worker.exitCode === null) worker.kill(); }, 15_000);
+  try {
+    send({ jsonrpc: "2.0", id: 1, method: "initialize", params: {} });
+    const initialized = await receiveLifecycle(1);
+    if (initialized?.jsonrpc !== "2.0" || initialized.id !== 1 || initialized.result?.ok !== true || !Array.isArray(initialized.result.supportedMethods)) {
+      throw new Error("Worker initialize response does not conform to the SPS lifecycle.");
+    }
+    send({ jsonrpc: "2.0", id: 2, method: "health", params: {} });
+    const healthy = await receiveLifecycle(2);
+    if (healthy?.jsonrpc !== "2.0" || healthy.id !== 2 || !healthy.result || typeof healthy.result !== "object") {
+      throw new Error("Worker health response does not conform to the SPS lifecycle.");
+    }
+    const exited = once(worker, "exit");
+    send({ jsonrpc: "2.0", id: 3, method: "shutdown", params: {} });
+    const stopped = await receiveLifecycle(3);
+    if (stopped?.jsonrpc !== "2.0" || stopped.id !== 3 || !Object.hasOwn(stopped, "result")) {
+      throw new Error("Worker shutdown response does not conform to the SPS lifecycle.");
+    }
+    const [code] = await Promise.race([
+      exited,
+      new Promise((_, reject) => setTimeout(() => reject(new Error("Worker did not exit after shutdown.")), 5_000)),
+    ]);
+    if (code !== 0) throw new Error(`Worker exited with code ${code}.${stderr ? ` ${stderr}` : ""}`);
+    return { workerPath };
+  } finally {
+    clearTimeout(overall);
+    lines.close();
+    if (worker.exitCode === null) worker.kill();
+  }
+}
+
 async function run() {
   const [command, ...rest] = process.argv.slice(2);
   if (!command || command === "help" || command === "--help") {
@@ -140,8 +247,18 @@ async function run() {
       displayName: options.get("name") || "SPS Plugin",
       version: options.get("version") || "0.1.0",
     });
-    if (!report.valid) throw new Error(report.errors.join("\n"));
-    console.log(`Created SPS Plugin template: ${report.source.root}`);
+    console.log(`Created SPS Plugin template: ${path.resolve(directory)}`);
+    console.log("Run npm install, then npm run build before validate, test, or pack.");
+    return;
+  }
+  if (command === "build") {
+    const result = await buildPluginWorker({ sourceDirectory: positionals[0] });
+    console.log(`Built self-contained SPS Worker: ${result.outputPath}`);
+    return;
+  }
+  if (command === "test") {
+    const result = await testPluginWorker(positionals[0]);
+    console.log(`SPS Worker lifecycle conformance passed: ${result.workerPath}`);
     return;
   }
   if (command === "validate") {

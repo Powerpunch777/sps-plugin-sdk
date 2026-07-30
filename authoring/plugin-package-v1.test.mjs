@@ -1,13 +1,11 @@
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
-import { once } from "node:events";
-import { copyFile, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { copyFile, cp, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { createInterface } from "node:readline";
 import test from "node:test";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { inspectLocalRegistry } from "../registry/local-registry-v1.mjs";
+import { inspectSpsExtensionProfileV2 } from "../profile/extension-profile-v2.mjs";
 import {
   createPluginTemplate,
   createSignedPluginRelease,
@@ -17,6 +15,9 @@ import {
   packagePluginDirectory,
   publishPluginToLocalRegistry,
 } from "./plugin-package-v1.mjs";
+import { buildPluginWorker } from "./worker-bundle-v1.mjs";
+
+const sdkRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 async function makePlugin(t) {
   const root = await mkdtemp(path.join(os.tmpdir(), "sps-plugin-authoring-"));
@@ -29,16 +30,15 @@ async function makePlugin(t) {
     displayName: "Weather",
     version: "1.2.3",
   });
-  assert.equal(template.valid, true);
+  // Mimic npm installing only the public SDK package. Packaging must still
+  // omit this dependency after the Worker has been bundled.
+  const dependencyRoot = path.join(sourceDirectory, "node_modules", "@sonparkserver", "plugin-sdk");
+  await cp(path.join(sdkRoot, "worker"), path.join(dependencyRoot, "worker"), { recursive: true });
+  await cp(path.join(sdkRoot, "runtime"), path.join(dependencyRoot, "runtime"), { recursive: true });
+  await cp(path.join(sdkRoot, "profile"), path.join(dependencyRoot, "profile"), { recursive: true });
+  await writeFile(path.join(dependencyRoot, "package.json"), JSON.stringify({ name: "@sonparkserver/plugin-sdk", type: "module", exports: { "./worker": "./worker/index.mjs", "./runtime": "./runtime/index.mjs" } }), "utf8");
+  await buildPluginWorker({ sourceDirectory });
   return { root, sourceDirectory };
-}
-
-async function nextWorkerResponse(lines) {
-  const [line] = await Promise.race([
-    once(lines, "line"),
-    new Promise((_, reject) => setTimeout(() => reject(new Error("Generated plugin worker did not respond.")), 2_000)),
-  ]);
-  return JSON.parse(line);
 }
 
 test("creates a source tree whose static manifest can be packaged without importing runtime code", async (t) => {
@@ -46,11 +46,14 @@ test("creates a source tree whose static manifest can be packaged without import
   const inspected = await inspectPluginDirectory(sourceDirectory);
   assert.equal(inspected.valid, true);
   const runtime = await readFile(path.join(sourceDirectory, "dist", "manifest.js"), "utf8");
+  const workerSource = await readFile(path.join(sourceDirectory, "src", "worker.mjs"), "utf8");
   const worker = await readFile(path.join(sourceDirectory, "dist", "worker.js"), "utf8");
   assert.match(runtime, /apiVersion: 1/);
   assert.match(runtime, /entrypoints: \{ worker: "\.\/dist\/worker\.js" \}/);
-  assert.match(worker, /createInterface/);
-  assert.match(worker, /supportedMethods/);
+  assert.match(runtime, /sps: \{ contractVersion: "2\.0", primitives: \[\] \}/);
+  assert.match(workerSource, /@sonparkserver\/plugin-sdk\/worker/);
+  assert.match(worker, /runSpsWorker/);
+  assert.doesNotMatch(worker, /from\s+["']@(?:sonparkserver|paperclipai)\//);
   const runtimeManifest = (await import(pathToFileURL(path.join(sourceDirectory, "dist", "manifest.js")).href)).default;
   assert.deepEqual(runtimeManifest, {
     id: "com.example.weather",
@@ -63,13 +66,33 @@ test("creates a source tree whose static manifest can be packaged without import
     minimumHostVersion: "0.4.0",
     capabilities: ["plugin.state.read"],
     entrypoints: { worker: "./dist/worker.js" },
+    sps: { contractVersion: "2.0", primitives: [] },
   });
+  const profile = inspectSpsExtensionProfileV2(runtimeManifest);
+  assert.equal(profile.valid, true, profile.errors.join("\n"));
+  assert.equal(profile.extension, null);
+  assert.deepEqual(profile.corePrimitives, []);
+  const packageManifest = JSON.parse(await readFile(path.join(sourceDirectory, "package.json"), "utf8"));
+  assert.deepEqual(packageManifest.spsPlugin, { manifest: "./dist/manifest.js", worker: "./dist/worker.js" });
+  assert.equal(packageManifest.scripts.build, "sps-plugin build .");
+  const sdkPackage = JSON.parse(await readFile(path.join(sdkRoot, "package.json"), "utf8"));
+  assert.equal(packageManifest.devDependencies["@sonparkserver/plugin-sdk"], `github:Powerpunch777/sps-plugin-sdk#v${sdkPackage.version}`);
+  assert.equal(Object.hasOwn(packageManifest, "paperclipPlugin"), false);
+  const readme = await readFile(path.join(sourceDirectory, "README.md"), "utf8");
+  assert.match(readme, /uses `package\.json\.spsPlugin` for native SPS package discovery/);
+  assert.match(readme, /`package\.json\.paperclipPlugin` key only as a legacy alias/);
   const archive = await packagePluginDirectory({
     sourceDirectory,
     archivePath: path.join(root, "weather.spsplugin"),
   });
   assert.equal(archive.archive.valid, true);
   assert.equal(archive.archive.package.staticManifest.plugin.id, "com.example.weather");
+});
+
+test("rejects a build without the fixed source Worker", async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "sps-plugin-worker-build-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await assert.rejects(() => buildPluginWorker({ sourceDirectory: root }), /src\/worker\.mjs/);
 });
 
 test("refuses to publish a release whose declared plugin API differs from its package", async (t) => {
@@ -93,32 +116,11 @@ test("refuses to publish a release whose declared plugin API differs from its pa
   );
 });
 
-test("keeps the generated worker alive for the minimum Host RPC lifecycle", async (t) => {
+test("bundles the generated SDK Worker without retaining its source package import", async (t) => {
   const { sourceDirectory } = await makePlugin(t);
-  const worker = spawn(process.execPath, [path.join(sourceDirectory, "dist", "worker.js")], {
-    cwd: sourceDirectory,
-    stdio: ["pipe", "pipe", "pipe"],
-  });
-  const lines = createInterface({ input: worker.stdout });
-  t.after(() => {
-    lines.close();
-    if (worker.exitCode === null) worker.kill();
-  });
-
-  const initialized = nextWorkerResponse(lines);
-  worker.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: {} })}\n`);
-  assert.deepEqual(await initialized, { jsonrpc: "2.0", id: 1, result: { ok: true, supportedMethods: ["health"] } });
-
-  const healthy = nextWorkerResponse(lines);
-  worker.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id: 2, method: "health", params: {} })}\n`);
-  assert.deepEqual(await healthy, { jsonrpc: "2.0", id: 2, result: { status: "ok", message: "Generated SPS Plugin is ready" } });
-
-  const stopped = nextWorkerResponse(lines);
-  const exited = once(worker, "exit");
-  worker.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id: 3, method: "shutdown", params: {} })}\n`);
-  assert.deepEqual(await stopped, { jsonrpc: "2.0", id: 3, result: null });
-  const [code] = await exited;
-  assert.equal(code, 0);
+  const worker = await readFile(path.join(sourceDirectory, "dist", "worker.js"), "utf8");
+  assert.match(worker, /SPS Worker has already been initialized/);
+  assert.doesNotMatch(worker, /from\s+["']@(?:sonparkserver|paperclipai)\//);
 });
 
 test("publishes immutable releases to a verified local Registry without copying private keys", async (t) => {
@@ -131,6 +133,10 @@ test("publishes immutable releases to a verified local Registry without copying 
     displayName: "Weather",
     version: "1.2.4",
   });
+  const secondDependencyRoot = path.join(secondSource, "node_modules", "@sonparkserver", "plugin-sdk");
+  await Promise.all(["worker", "runtime", "profile"].map((directory) => cp(path.join(sdkRoot, directory), path.join(secondDependencyRoot, directory), { recursive: true })));
+  await writeFile(path.join(secondDependencyRoot, "package.json"), JSON.stringify({ name: "@sonparkserver/plugin-sdk", type: "module", exports: { "./worker": "./worker/index.mjs", "./runtime": "./runtime/index.mjs" } }), "utf8");
+  await buildPluginWorker({ sourceDirectory: secondSource });
   const publisher = generatePluginSigningKeyPair();
   const registryRoot = generatePluginSigningKeyPair();
   const registryDirectory = path.join(root, "team-registry");
@@ -255,6 +261,7 @@ test("produces a signed release and Registry index that the Local Registry verif
     publisherPrivateKey: publisher.privateKey,
     publishedAt: "2026-07-23T00:00:00.000Z",
   });
+  assert.equal(release.record.compatibility.extensionProfile, "2.0");
   const registryRoot = path.join(root, "registry");
   const releasePath = "releases/com.example.weather-1.2.3.json";
   await (await import("node:fs/promises")).mkdir(path.join(registryRoot, "releases"), { recursive: true });

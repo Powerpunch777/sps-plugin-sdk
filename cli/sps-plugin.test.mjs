@@ -1,19 +1,29 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { cp, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   createPluginTemplate,
   generatePluginSigningKeyPair,
   packagePluginDirectory,
   publishPluginToLocalRegistry,
 } from "../authoring/plugin-package-v1.mjs";
+import { buildPluginWorker } from "../authoring/worker-bundle-v1.mjs";
 import { inspectLocalRegistry } from "../registry/local-registry-v1.mjs";
+import { inspectSpsExtensionProfileV2 } from "../profile/extension-profile-v2.mjs";
 
 const cliPath = path.join(path.dirname(fileURLToPath(import.meta.url)), "sps-plugin.mjs");
+const sdkRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+
+async function buildTemplateWorker(sourceDirectory) {
+  const dependencyRoot = path.join(sourceDirectory, "node_modules", "@sonparkserver", "plugin-sdk");
+  await Promise.all(["worker", "runtime", "profile"].map((directory) => cp(path.join(sdkRoot, directory), path.join(dependencyRoot, directory), { recursive: true })));
+  await writeFile(path.join(dependencyRoot, "package.json"), JSON.stringify({ name: "@sonparkserver/plugin-sdk", type: "module", exports: { "./worker": "./worker/index.mjs", "./runtime": "./runtime/index.mjs" } }), "utf8");
+  await buildPluginWorker({ sourceDirectory });
+}
 
 function runCli(...args) {
   return new Promise((resolve, reject) => {
@@ -40,6 +50,22 @@ test("inspects a source tree, package, and local Registry without running plugin
     displayName: "Weather",
     version: "1.0.0",
   });
+  await buildTemplateWorker(sourceDirectory);
+  await writeFile(path.join(sourceDirectory, "src", "worker.mjs"), [
+    'import { defineSpsPlugin, runSpsWorker } from "@sonparkserver/plugin-sdk/worker";',
+    "runSpsWorker(defineSpsPlugin({",
+    '  async initialize({ spsTransport }) { await spsTransport.request("sps.runtimes.list", { companyId: "fixture" }); },',
+    '  health() { return { status: "ok" }; },',
+    "  shutdown() { return null; },",
+    "}));",
+    "",
+  ].join("\n"), "utf8");
+  await buildPluginWorker({ sourceDirectory });
+  const conformance = await runCli("test", sourceDirectory);
+  assert.equal(conformance.code, 0, conformance.stderr);
+  const manifest = (await import(pathToFileURL(path.join(sourceDirectory, "dist", "manifest.js")).href)).default;
+  const profile = inspectSpsExtensionProfileV2(manifest);
+  assert.equal(profile.valid, true, profile.errors.join("\n"));
   const archive = await packagePluginDirectory({ sourceDirectory, archivePath });
   const publisher = generatePluginSigningKeyPair();
   const registryRoot = generatePluginSigningKeyPair();
@@ -84,6 +110,7 @@ test("publishes signed Publisher profile and Registry root details through the C
     writeFile(publisherKeyPath, publisher.privateKey, { encoding: "utf8", mode: 0o600 }),
     writeFile(registryRootKeyPath, registryRoot.privateKey, { encoding: "utf8", mode: 0o600 }),
   ]);
+  await buildTemplateWorker(sourceDirectory);
   const result = await runCli(
     "publish-local", sourceDirectory,
     "--registry", registryDirectory,
