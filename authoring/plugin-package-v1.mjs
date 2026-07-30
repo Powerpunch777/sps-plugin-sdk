@@ -1,6 +1,7 @@
 import { createHash, createPublicKey, generateKeyPairSync, sign } from "node:crypto";
 import { createWriteStream, promises as fs } from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import yazl from "yazl";
 import { inspectPluginArchive } from "../registry/archive-inspector-v1.mjs";
 import {
@@ -23,6 +24,7 @@ const MAX_AUTHORING_TOTAL_BYTES = 512 * 1024 * 1024;
 const SEMVER = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
 const PLUGIN_ID = /^[a-z0-9][a-z0-9.-]{2,127}$/;
 const PUBLISHER_ID = /^[a-z0-9][a-z0-9._-]{1,127}$/;
+const SDK_PACKAGE_PATH = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "package.json");
 
 const EXCLUDED_DIRECTORIES = new Set([".git", "node_modules"]);
 const SENSITIVE_FILE = /(?:^|\/)(?:\.env(?:\..*)?|\.npmrc|id_rsa|id_ed25519|credentials(?:\.json)?|.*\.(?:pem|key|p12|pfx))$/i;
@@ -294,7 +296,7 @@ export async function createSignedPluginRelease({
   publisherPrivateKey,
   compatibilitySps = ">=0.4.0 <0.5.0",
   pluginApi = 1,
-  extensionProfile = "1.0",
+  extensionProfile = "2.0",
   visibility = "public",
   catalog,
   publishedAt = new Date().toISOString(),
@@ -449,7 +451,7 @@ export async function publishPluginToLocalRegistry({
   registryRootKeyId,
   registryRootPrivateKey,
   compatibilitySps = ">=0.4.0 <0.5.0",
-  extensionProfile = "1.0",
+  extensionProfile = "2.0",
   visibility = "public",
   catalog,
   publisherProfile,
@@ -559,6 +561,8 @@ export async function createPluginTemplate({ directory, pluginId, packageName, d
   if (!SEMVER.test(version)) throw new Error("Plugin version must be SemVer.");
   if (typeof packageName !== "string" || packageName.trim().length === 0) throw new Error("Package name is required.");
   const root = path.resolve(directory ?? "");
+  const sdkPackage = JSON.parse(await fs.readFile(SDK_PACKAGE_PATH, "utf8"));
+  if (!SEMVER.test(sdkPackage.version ?? "")) throw new Error("SDK package version must be SemVer.");
   if (!root || root === path.parse(root).root) throw new Error("Plugin template directory is required.");
   try {
     const entries = await fs.readdir(root);
@@ -567,7 +571,7 @@ export async function createPluginTemplate({ directory, pluginId, packageName, d
     if (error?.code !== "ENOENT") throw error;
   }
   const manifestPath = path.join(root, "dist", "manifest.js");
-  const workerPath = path.join(root, "dist", "worker.js");
+  const workerSourcePath = path.join(root, "src", "worker.mjs");
   const runtime = [
     "export default {",
     `  id: ${JSON.stringify(pluginId)},`,
@@ -580,41 +584,18 @@ export async function createPluginTemplate({ directory, pluginId, packageName, d
     "  minimumHostVersion: \"0.4.0\",",
     '  capabilities: ["plugin.state.read"],',
     "  entrypoints: { worker: \"./dist/worker.js\" },",
+    "  sps: { contractVersion: \"2.0\", primitives: [] },",
     "};",
     "",
   ].join("\n");
   const worker = [
-    'import { createInterface } from "node:readline";',
+    'import { defineSpsPlugin, runSpsWorker } from "@sonparkserver/plugin-sdk/worker";',
     "",
-    "// This tiny worker is dependency-free. It proves the Host RPC lifecycle",
-    "// before an author adds the SDK and bundles feature code.",
-    'const supportedMethods = ["health"];',
+    "runSpsWorker(defineSpsPlugin({",
+    "  health() { return { status: \"ok\", message: \"Generated SPS Plugin is ready\" }; },",
+    "  shutdown() { return null; },",
+    "}));",
     "",
-    "function reply(id, result) {",
-    '  process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id, result }) + "\\n");',
-    "}",
-    "",
-    "function reject(id, message) {",
-    '  process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id, error: { code: -32601, message } }) + "\\n");',
-    "}",
-    "",
-    'const input = createInterface({ input: process.stdin });',
-    'input.on("line", (line) => {',
-    "  let request;",
-    "  try { request = JSON.parse(line); } catch { return; }",
-    '  if (!request || request.jsonrpc !== "2.0" || request.id === undefined) return;',
-    '  if (request.method === "initialize") {',
-    "    reply(request.id, { ok: true, supportedMethods });",
-    '  } else if (request.method === "health") {',
-    '    reply(request.id, { status: "ok", message: "Generated SPS Plugin is ready" });',
-    '  } else if (request.method === "shutdown") {',
-    "    reply(request.id, null);",
-    "    input.close();",
-    "    setImmediate(() => process.exit(0));",
-    "  } else {",
-    '    reject(request.id, "Unknown method: " + request.method);',
-    "  }",
-    "});",
     "",
   ].join("\n");
   // Core manifests require at least one capability. This read-only,
@@ -628,13 +609,16 @@ export async function createPluginTemplate({ directory, pluginId, packageName, d
     capabilities,
     permissionsDigest: calculateStaticCapabilitiesDigest(capabilities),
   };
-  await fs.mkdir(path.dirname(manifestPath), { recursive: true, mode: 0o700 });
+  await Promise.all([
+    fs.mkdir(path.dirname(manifestPath), { recursive: true, mode: 0o700 }),
+    fs.mkdir(path.dirname(workerSourcePath), { recursive: true, mode: 0o700 }),
+  ]);
   await Promise.all([
     fs.writeFile(manifestPath, runtime, { encoding: "utf8", mode: 0o644, flag: "wx" }),
-    fs.writeFile(workerPath, worker, { encoding: "utf8", mode: 0o644, flag: "wx" }),
-    fs.writeFile(path.join(root, "package.json"), `${JSON.stringify({ name: packageName, version, private: true, type: "module", paperclipPlugin: { manifest: "./dist/manifest.js", worker: "./dist/worker.js" } }, null, 2)}\n`, { encoding: "utf8", mode: 0o644, flag: "wx" }),
+    fs.writeFile(workerSourcePath, worker, { encoding: "utf8", mode: 0o644, flag: "wx" }),
+    fs.writeFile(path.join(root, "package.json"), `${JSON.stringify({ name: packageName, version, private: true, type: "module", files: ["dist/manifest.js", "dist/worker.js"], scripts: { build: "sps-plugin build .", test: "sps-plugin test ." }, devDependencies: { "@sonparkserver/plugin-sdk": `github:Powerpunch777/sps-plugin-sdk#v${sdkPackage.version}` }, spsPlugin: { manifest: "./dist/manifest.js", worker: "./dist/worker.js" } }, null, 2)}\n`, { encoding: "utf8", mode: 0o644, flag: "wx" }),
     fs.writeFile(path.join(root, "sps-plugin.json"), `${JSON.stringify(staticManifest, null, 2)}\n`, { encoding: "utf8", mode: 0o644, flag: "wx" }),
-    fs.writeFile(path.join(root, "README.md"), `# ${displayName}\n\nGenerated by SPS Plugin Kit. The included Worker only proves the Host RPC lifecycle. Add capabilities deliberately, bundle SDK-based feature code, then update sps-plugin.json before packaging.\n`, { encoding: "utf8", mode: 0o644, flag: "wx" }),
+    fs.writeFile(path.join(root, "README.md"), `# ${displayName}\n\nGenerated by SPS Plugin Kit. Install dependencies, then run \`npm run build\` to bundle \`src/worker.mjs\` into self-contained \`dist/worker.js\`. The included Worker only proves the SPS Host RPC lifecycle. The runtime manifest declares SPS Extension Profile 2.0 with no Core primitives; add capabilities and primitives deliberately, then update sps-plugin.json before packaging.\n\n## SPS package discovery\n\nThis starter uses \`package.json.spsPlugin\` for native SPS package discovery. Keep its manifest and worker entries synchronized with \`dist/manifest.js\` and \`dist/worker.js\`. SPS Desktop reads the old \`package.json.paperclipPlugin\` key only as a legacy alias for packages created before native SPS discovery; new plugins must not add it.\n`, { encoding: "utf8", mode: 0o644, flag: "wx" }),
   ]);
   return await inspectPluginDirectory(root);
 }

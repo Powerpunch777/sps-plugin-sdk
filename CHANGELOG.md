@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.3.0 - 2026-07-31
+
+- Add public Runtime, portable Worker, platform, and UI bridge entrypoints.
+- Add a self-contained Node 22 Worker build and CLI lifecycle conformance test.
+- Use native `spsPlugin` package metadata while retaining the legacy alias only
+  for compatibility.
+- Keep generated plugin installs reproducible through the public `v0.3.0`
+  GitHub tag until an npm package is published.
+
 ## 0.2.1 - 2026-07-30
 
 - Recognize `instance.settings.register` as a valid UI surface capability for

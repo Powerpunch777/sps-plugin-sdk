@@ -13,6 +13,8 @@ and product repositories.
 - Extension Profile v2 checks for the workflow-neutral SPS Core boundary.
 - `.spsplugin` packaging, static manifest inspection, and capability digests.
 - Ed25519 release and Registry index signing.
+- A workflow-neutral Runtime facade for Source metadata, approved Runtime
+  dispatch, run observation, execution grants, and artifact records.
 - `sps-plugin` CLI commands for initialization, validation, packaging, key
   generation, release records, and local or static Registry publishing.
 
@@ -41,9 +43,91 @@ Source metadata and routes, runtime discovery and dispatch, run observation,
 artifact writing, and secret references. A plugin defines its own workflow
 meaning on top of those primitives.
 
+## Runtime facade
+
+New Worker code can import the explicit public entrypoint:
+
+```js
+import { createSpsRuntimeClient, defineSpsRuntimeContract } from "@sonparkserver/plugin-sdk/runtime";
+
+const runtime = createSpsRuntimeClient(ctx.spsTransport);
+const declaration = defineSpsRuntimeContract({
+  primitives: ["runtimes.list", "runtimes.dispatch", "runs.observe"],
+});
+```
+
+An SPS Desktop Host adapter must inject `ctx.spsTransport` when it launches a
+Worker. The facade sends the existing `sps.*` Worker RPC names and payloads
+without translating them to a second wire contract. That adapter is
+intentionally not part of this SDK slice. The SDK does not ship a Host
+transport implementation, nor does it accept raw commands, working
+directories, Host paths, or credentials. This keeps plugin packages independent
+from private SPS Core checkouts while the Host remains the only authority that
+can route execution.
+
+## Portable Worker bootstrap
+
+Plugins that need a Worker can use the public `worker` entrypoint without a
+private SPS Core checkout or a Paperclip package. It owns only a small
+newline-delimited JSON-RPC lifecycle: `initialize`, `health`, and `shutdown`.
+It exposes the same finite ten-operation `spsTransport` used by the Runtime
+facade. Logs must go to stderr; stdout is reserved for JSON-RPC messages.
+The Host receives the Core `InitializeResult` `{ ok: true, supportedMethods }`;
+an `initialize` handler's return value is private setup data, not a protocol
+response.
+
+```js
+import { defineSpsPlugin, runSpsWorker } from "@sonparkserver/plugin-sdk/worker";
+
+runSpsWorker(defineSpsPlugin({
+  async initialize({ spsTransport }) {
+    const runtimes = await spsTransport.request("sps.runtimes.list", { companyId: "company-1" });
+    return { runtimeCount: runtimes.length };
+  },
+  health() { return { status: "ok" }; },
+  shutdown() { return { stopped: true }; },
+}));
+```
+
+The optional public `platform` entrypoint adds the current workflow-neutral
+Core primitives for tools, events, scheduled jobs, and scoped plugin state.
+The package manifest remains authoritative: its tool/job declarations and
+capabilities must match the handlers declared by Worker code. SPS Core checks
+those capabilities and owns every Host-side operation.
+
+```js
+import { defineEvent, defineSpsPlatformContract } from "@sonparkserver/plugin-sdk/platform";
+import { defineSpsPlugin, runSpsWorker } from "@sonparkserver/plugin-sdk/worker";
+
+const platform = defineSpsPlatformContract({
+  events: [defineEvent("project.updated", async (event, api) => {
+    await api.state.set(
+      { scopeKind: "project", scopeId: event.payload.projectId, stateKey: "last-event" },
+      event.eventId,
+    );
+  })],
+});
+
+runSpsWorker(defineSpsPlugin({ platform }));
+```
+
+The public `ui` entrypoint validates page, sidebar, settings, and detail-tab
+contributions. Plugin UI bundles import hooks from
+`@sonparkserver/plugin-sdk/ui/bridge`; the Host injects their implementation at
+render time, so public bundles do not import private SPS Core or its React
+instance. Shell, Dashboard, and Inbox contributions are deliberately not
+claimed until their Core contracts are implemented.
+
+None of these contracts defines task semantics, Rooms, roles, approvals, or a
+memory strategy. Those meanings remain plugin-owned.
+
 ## Quick start
 
 Node.js 22 or later is required.
+
+Until this package is published to npm, generated projects pin the public
+GitHub release tag (`v0.3.0`). The generated Worker is bundled before packaging,
+so the installed plugin does not need the SDK or `node_modules` at runtime.
 
 ```powershell
 git clone https://github.com/Powerpunch777/sps-plugin-sdk.git
@@ -52,7 +136,12 @@ npm ci
 npm test
 
 node .\cli\sps-plugin.mjs init .\my-plugin --id com.example.my-plugin --package @example/my-plugin
+cd .\my-plugin
+npm install
+npm run build
+cd ..
 node .\cli\sps-plugin.mjs validate .\my-plugin
+node .\cli\sps-plugin.mjs test .\my-plugin
 node .\cli\sps-plugin.mjs pack .\my-plugin --out .\release\my-plugin.spsplugin
 ```
 
@@ -60,12 +149,19 @@ node .\cli\sps-plugin.mjs pack .\my-plugin --out .\release\my-plugin.spsplugin
 
 1. Create a plugin in its own folder or Git repository. Do not edit SPS
    Desktop application files.
-2. Declare the minimum capabilities and Core primitives required by the
+2. Install its `@sonparkserver/plugin-sdk` development dependency and run
+   `npm run build`. This bundles `src/worker.mjs` into Node 22 ESM
+   `dist/worker.js`; the archive excludes `node_modules`, but includes that
+   self-contained Worker.
+3. Declare the minimum capabilities and Core primitives required by the
    plugin.
-3. Run `validate` before packaging, then use `inspect` to review the package.
-4. Test the package through a Local Development Registry before proposing an
+4. Run `validate` and `sps-plugin test` before packaging. The latter starts
+   only `dist/worker.js` and verifies initialize, health, shutdown, and clean
+   process exit. It never executes package scripts or arbitrary commands.
+5. Use `inspect` to review the package and test it through a Local Development
+   Registry before proposing an
    Official Registry release.
-5. Let the Host explicitly stage and activate the package for a Workspace.
+6. Let the Host explicitly stage and activate the package for a Workspace.
 
 An intentionally small Profile v2 declaration looks like this:
 
@@ -89,6 +185,13 @@ An intentionally small Profile v2 declaration looks like this:
 
 The declaration says what the plugin needs. It does not grant a Host path,
 credential, runtime, or lifecycle authority.
+
+`sps-plugin init` starts with the smaller neutral declaration
+`sps: { contractVersion: "2.0", primitives: [] }`. It intentionally does not
+create an `agentPlatform` kind, a task model, a room model, or role semantics.
+Generated `package.json` files use the native `spsPlugin` package discovery
+key. SPS Desktop still reads `paperclipPlugin` only as a legacy alias for
+packages created before native SPS discovery; new plugins must not add it.
 
 ## Local registry test
 
