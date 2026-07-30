@@ -1,5 +1,8 @@
 # SPS Plugin SDK
 
+Looking for SPS Desktop? Start with the
+[SPS product overview](https://github.com/Powerpunch777/SPS).
+
 The SPS Plugin SDK is the public toolkit for building SPS extensions. It is
 independent from SPS Desktop, Host data, Node credentials, private projects,
 and product repositories.
