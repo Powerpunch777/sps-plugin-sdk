@@ -24,6 +24,7 @@ const EXTENSION_KINDS = new Set([
   "backend_provider",
 ]);
 const UI_CAPABILITY_PREFIX = "ui.";
+const SETTINGS_SURFACE_CAPABILITY = "instance.settings.register";
 
 function asArray(value) {
   return Array.isArray(value) ? value : [];
@@ -34,7 +35,9 @@ function hasCapability(capabilities, capability) {
 }
 
 function hasUiCapability(capabilities) {
-  return capabilities.some((capability) => capability.startsWith(UI_CAPABILITY_PREFIX));
+  return capabilities.some((capability) =>
+    capability.startsWith(UI_CAPABILITY_PREFIX) || capability === SETTINGS_SURFACE_CAPABILITY,
+  );
 }
 
 function isCompatibleSpsContract(value) {
@@ -81,7 +84,7 @@ export function inspectSpsExtensionProfileV2(manifest) {
   }
   if (slots.length > 0) {
     features.push("surface");
-    if (!hasUiCapability(capabilities)) errors.push("UI slot declarations require at least one ui.*.register capability.");
+    if (!hasUiCapability(capabilities)) errors.push("UI slot declarations require a UI or settings surface registration capability.");
     if (typeof manifest.entrypoints?.ui !== "string") errors.push("UI slot declarations require a UI entrypoint.");
   }
   if (jobs.length > 0) {

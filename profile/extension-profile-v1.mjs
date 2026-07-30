@@ -16,6 +16,7 @@ const WORKPLANE_CAPABILITIES = [
 ];
 
 const UI_CAPABILITY_PREFIX = "ui.";
+const SETTINGS_SURFACE_CAPABILITY = "instance.settings.register";
 
 function asArray(value) {
   return Array.isArray(value) ? value : [];
@@ -26,7 +27,9 @@ function hasCapability(capabilities, capability) {
 }
 
 function hasUiCapability(capabilities) {
-  return capabilities.some((capability) => capability.startsWith(UI_CAPABILITY_PREFIX));
+  return capabilities.some((capability) =>
+    capability.startsWith(UI_CAPABILITY_PREFIX) || capability === SETTINGS_SURFACE_CAPABILITY,
+  );
 }
 
 function hasCompatibleContractVersion(value) {
@@ -91,7 +94,7 @@ export function inspectSpsExtensionProfile(manifest) {
   if (slots.length > 0) {
     features.push("surface");
     if (!hasUiCapability(capabilities)) {
-      errors.push("UI slot declarations require at least one ui.*.register capability.");
+      errors.push("UI slot declarations require a UI or settings surface registration capability.");
     }
     if (typeof manifest.entrypoints?.ui !== "string") {
       errors.push("UI slot declarations require a UI entrypoint.");

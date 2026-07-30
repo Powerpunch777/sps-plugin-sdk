@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.1 - 2026-07-30
+
+- Recognize `instance.settings.register` as a valid UI surface capability for
+  Settings-only plugins.
+
 ## 0.2.0 - 2026-07-30
 
 - Add Extension Profile 2.0 validation for workflow-neutral SPS Core
