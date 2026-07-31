@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.5.0 - 2026-07-31
+
+- Add the public Developer Mode build contract with deterministic source and
+  output fingerprints.
+- Add path-safe `--json` output for the Plugin Kit `build`, `validate`, and
+  `test` commands.
+- Reject source-tree symbolic links and bound source file count and bytes
+  before a development candidate can be reported.
+- Fingerprint both single-file and directory-based UI builds with bounded,
+  link-safe deterministic traversal.
+
+## 0.4.0 - 2026-07-31
+
+- Add Workspace Shell, Dashboard widget, and Inbox manifest contracts.
+- Add workflow-neutral Worker Inbox publishing and in-memory test evidence.
+
 ## 0.3.0 - 2026-07-31
 
 - Add public Runtime, portable Worker, platform, and UI bridge entrypoints.

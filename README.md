@@ -175,7 +175,7 @@ memory strategy. Those meanings remain plugin-owned.
 Node.js 22 or later is required.
 
 Until this package is published to npm, generated projects pin the public
-GitHub release tag (`v0.4.0`). The generated Worker is bundled before packaging,
+GitHub release tag (`v0.5.0`). The generated Worker is bundled before packaging,
 so the installed plugin does not need the SDK or `node_modules` at runtime.
 
 ```powershell
@@ -192,6 +192,51 @@ cd ..
 node .\cli\sps-plugin.mjs validate .\my-plugin
 node .\cli\sps-plugin.mjs test .\my-plugin
 node .\cli\sps-plugin.mjs pack .\my-plugin --out .\release\my-plugin.spsplugin
+```
+
+## Developer Mode build contract
+
+SPS Developer Mode can observe a plugin source folder without running package
+scripts. The public CLI supplies the same machine-readable contract for its
+three authoring gates:
+
+```powershell
+node .\cli\sps-plugin.mjs build .\my-plugin --json
+node .\cli\sps-plugin.mjs validate .\my-plugin --json
+node .\cli\sps-plugin.mjs test .\my-plugin --json
+```
+
+Each command keeps its existing human output and exit behavior when `--json`
+is omitted. With `--json`, standard output contains exactly one JSON object
+with `schemaVersion: "development-build/v1"`, the command outcome, source and
+build-output SHA-256 fingerprints, timestamps, and path-safe diagnostics. A
+failed command still returns non-zero, but does not write stack traces, local
+absolute paths, or credential values to the JSON result.
+
+`sourceFingerprint` is deterministic: it hashes sorted relative POSIX paths
+and raw bytes from regular source files. It excludes `.git`, `node_modules`,
+`dist`, temporary files, logs, and likely secret files such as `.env` and key
+material. Symbolic links and junctions in the included source tree are
+rejected, as are trees exceeding the file-count or byte limits. This makes a
+Developer Mode candidate reproducible without treating generated output or a
+developer's private machine state as source.
+
+`manifestSha256` and `workerSha256` are computed from the actual
+`dist/manifest.js` and `dist/worker.js` bytes. If `package.json.spsPlugin.ui`
+declares a safe file or directory below `dist/`, its sorted paths and bytes are
+reported as one deterministic `uiSha256`; when no UI output exists,
+`uiSha256` is `null`. Output trees are bounded and reject links just like source
+trees. Missing required Worker or manifest outputs make the JSON result fail.
+SPS can therefore stage only a candidate whose build, validation, test, source
+revision, and output revision agree.
+
+Plugin tools can import the same public contract directly:
+
+```js
+import {
+  fingerprintDevelopmentSource,
+  fingerprintDevelopmentBuildOutputs,
+} from "@sonparkserver/plugin-sdk/authoring/development-build-v1.mjs";
 ```
 
 ## Authoring loop

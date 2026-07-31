@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { cp, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -136,4 +136,93 @@ test("publishes signed Publisher profile and Registry root details through the C
     displayName: "Example Studio",
     websiteUrl: "https://example.test",
   });
+});
+
+test("Developer Mode CLI commands emit one path-safe JSON build contract on success", async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "sps-plugin-cli-development-json-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const sourceDirectory = path.join(root, "source");
+  await createPluginTemplate({
+    directory: sourceDirectory,
+    pluginId: "com.example.development-json",
+    packageName: "@example/development-json",
+    displayName: "Development JSON",
+    version: "1.0.0",
+  });
+  await buildTemplateWorker(sourceDirectory);
+
+  for (const command of ["build", "validate", "test"]) {
+    const result = await runCli(command, sourceDirectory, "--json");
+    assert.equal(result.code, 0, result.stderr);
+    assert.equal(result.stderr, "");
+    const parsed = JSON.parse(result.stdout);
+    assert.deepEqual(Object.keys(parsed).sort(), [
+      "command", "completedAt", "diagnostics", "manifestSha256", "schemaVersion", "sourceFingerprint", "startedAt", "success", "uiSha256", "workerSha256",
+    ]);
+    assert.equal(parsed.schemaVersion, "development-build/v1");
+    assert.equal(parsed.command, command);
+    assert.equal(parsed.success, true);
+    assert.match(parsed.sourceFingerprint, /^[a-f0-9]{64}$/);
+    assert.match(parsed.manifestSha256, /^[a-f0-9]{64}$/);
+    assert.match(parsed.workerSha256, /^[a-f0-9]{64}$/);
+    assert.equal(parsed.uiSha256, null);
+    assert.deepEqual(parsed.diagnostics, []);
+  }
+});
+
+test("Developer Mode JSON failures retain non-zero exits without paths, stacks, or secret values", async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "sps-plugin-cli-development-failure-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const missing = path.join(root, "missing", "super-secret-token");
+  const result = await runCli("build", missing, "--json");
+  assert.notEqual(result.code, 0);
+  assert.equal(result.stderr, "");
+  const parsed = JSON.parse(result.stdout);
+  assert.equal(parsed.schemaVersion, "development-build/v1");
+  assert.equal(parsed.command, "build");
+  assert.equal(parsed.success, false);
+  assert.ok(parsed.diagnostics.length > 0);
+  assert.doesNotMatch(result.stdout, new RegExp(root.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i"));
+  assert.doesNotMatch(result.stdout, /super-secret-token|stack|at file:/i);
+});
+
+test("Developer Mode validate and test failures each return one JSON contract", async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "sps-plugin-cli-development-command-failures-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const invalidSource = path.join(root, "invalid");
+  const brokenWorker = path.join(root, "broken-worker");
+  await Promise.all([
+    mkdir(invalidSource),
+    (async () => {
+      await mkdir(path.join(brokenWorker, "dist"), { recursive: true });
+      await Promise.all([
+        writeFile(path.join(brokenWorker, "dist", "manifest.js"), "export default {};\n", "utf8"),
+        writeFile(path.join(brokenWorker, "dist", "worker.js"), "process.exit(0);\n", "utf8"),
+      ]);
+    })(),
+  ]);
+  for (const [command, sourceDirectory] of [["validate", invalidSource], ["test", brokenWorker]]) {
+    const result = await runCli(command, sourceDirectory, "--json");
+    assert.notEqual(result.code, 0);
+    assert.equal(result.stderr, "");
+    const parsed = JSON.parse(result.stdout);
+    assert.equal(parsed.command, command);
+    assert.equal(parsed.success, false);
+    assert.ok(parsed.diagnostics.length > 0);
+    assert.doesNotMatch(result.stdout, new RegExp(root.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i"));
+  }
+});
+
+test("Developer Mode build reports missing required manifest output after bundling the Worker", async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "sps-plugin-cli-development-missing-output-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const sourceDirectory = path.join(root, "source");
+  await mkdir(path.join(sourceDirectory, "src"), { recursive: true });
+  await writeFile(path.join(sourceDirectory, "src", "worker.mjs"), "export const worker = true;\n", "utf8");
+  const result = await runCli("build", sourceDirectory, "--json");
+  assert.notEqual(result.code, 0);
+  const parsed = JSON.parse(result.stdout);
+  assert.equal(parsed.success, false);
+  assert.equal(parsed.workerSha256, null);
+  assert.ok(parsed.diagnostics.some((diagnostic) => diagnostic.code === "OUTPUT_MISSING"));
 });
