@@ -1,7 +1,7 @@
 {
   "name": "@sonparkserver/plugin-sdk",
   "private": false,
-  "version": "0.4.0",
+  "version": "0.5.0",
   "type": "module",
   "description": "Public SDK, CLI, and conformance tools for SPS plugins.",
   "license": "Apache-2.0",
@@ -49,6 +49,11 @@
       "import": "./ui/bridge.mjs",
       "default": "./ui/bridge.mjs"
     },
+    "./authoring/development-build-v1.mjs": {
+      "types": "./authoring/development-build-v1.d.ts",
+      "import": "./authoring/development-build-v1.mjs",
+      "default": "./authoring/development-build-v1.mjs"
+    },
     "./profile/*": "./profile/*",
     "./registry/*": "./registry/*",
     "./authoring/*": "./authoring/*"
@@ -61,14 +66,16 @@
       "manifest": ["manifest/index.d.ts"],
       "platform": ["platform/index.d.ts"],
       "ui": ["ui/index.d.ts"],
-      "ui/bridge": ["ui/bridge.d.ts"]
+      "ui/bridge": ["ui/bridge.d.ts"],
+      "authoring/development-build-v1": ["authoring/development-build-v1.d.ts"],
+      "authoring/development-build-v1.mjs": ["authoring/development-build-v1.d.ts"]
     }
   },
   "bin": {
     "sps-plugin": "./cli/sps-plugin.mjs"
   },
   "scripts": {
-    "test": "node --test profile/extension-profile-v1.test.mjs profile/extension-profile-v2.test.mjs runtime/index.test.mjs runtime/consumer-smoke.test.mjs worker/index.test.mjs worker/testing.test.mjs worker/consumer-smoke.test.mjs manifest/index.test.mjs platform/index.test.mjs ui/index.test.mjs ui/bridge.test.mjs registry/release-record-v1.test.mjs registry/local-registry-v1.test.mjs registry/archive-inspector-v1.test.mjs registry/source-trust-v1.test.mjs registry/package-extractor-v1.test.mjs registry/static-package-manifest-v1.test.mjs authoring/worker-bundle-v1.test.mjs authoring/plugin-package-v1.test.mjs cli/sps-plugin.test.mjs templates/github-static-registry-publish.test.mjs",
+    "test": "node --test profile/extension-profile-v1.test.mjs profile/extension-profile-v2.test.mjs runtime/index.test.mjs runtime/consumer-smoke.test.mjs worker/index.test.mjs worker/testing.test.mjs worker/consumer-smoke.test.mjs manifest/index.test.mjs platform/index.test.mjs ui/index.test.mjs ui/bridge.test.mjs registry/release-record-v1.test.mjs registry/local-registry-v1.test.mjs registry/archive-inspector-v1.test.mjs registry/source-trust-v1.test.mjs registry/package-extractor-v1.test.mjs registry/static-package-manifest-v1.test.mjs authoring/worker-bundle-v1.test.mjs authoring/plugin-package-v1.test.mjs authoring/development-build-v1.test.mjs authoring/development-build-v1.consumer-smoke.test.mjs cli/sps-plugin.test.mjs templates/github-static-registry-publish.test.mjs",
     "check": "npm run test"
   },
   "engines": {

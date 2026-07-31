@@ -14,6 +14,12 @@ import {
   publishPluginToLocalRegistry,
 } from "../authoring/plugin-package-v1.mjs";
 import { buildPluginWorker } from "../authoring/worker-bundle-v1.mjs";
+import {
+  createDevelopmentBuildResult,
+  developmentBuildDiagnostic,
+  fingerprintDevelopmentBuildOutputs,
+  fingerprintDevelopmentSource,
+} from "../authoring/development-build-v1.mjs";
 import { inspectPluginArchive } from "../registry/archive-inspector-v1.mjs";
 import { inspectLocalRegistry } from "../registry/local-registry-v1.mjs";
 import { SPS_RUNTIME_OPERATIONS } from "../runtime/index.mjs";
@@ -23,9 +29,9 @@ function usage() {
 
 Commands:
   sps-plugin init <directory> --id <plugin-id> --package <package-name> [--name <display-name>] [--version <semver>]
-  sps-plugin build <directory>
-  sps-plugin test <directory>
-  sps-plugin validate <directory>
+  sps-plugin build <directory> [--json]
+  sps-plugin test <directory> [--json]
+  sps-plugin validate <directory> [--json]
   sps-plugin inspect <plugin-directory|registry-directory|plugin.spsplugin>
   sps-plugin pack <directory> --out <plugin.spsplugin> [--overwrite]
   sps-plugin keygen --private <publisher-private.pem> --public <publisher-public.pem>
@@ -45,7 +51,7 @@ function parseArguments(values) {
       continue;
     }
     const key = value.slice(2);
-    if (key === "overwrite") {
+    if (key === "overwrite" || key === "json") {
       options.set(key, true);
       continue;
     }
@@ -231,6 +237,57 @@ async function testPluginWorker(sourceDirectory) {
   }
 }
 
+function writeDevelopmentResult(result) {
+  process.stdout.write(`${JSON.stringify(result)}\n`);
+}
+
+async function runDevelopmentCommand(command, sourceDirectory, execute) {
+  const startedAt = new Date().toISOString();
+  const diagnostics = [];
+  let sourceFingerprint = null;
+  let outputs = { manifestSha256: null, workerSha256: null, uiSha256: null };
+  let execution = null;
+  try {
+    execution = await execute();
+  } catch (error) {
+    diagnostics.push(developmentBuildDiagnostic(error, {
+      code: `${command.toUpperCase()}_FAILED`,
+      phase: command,
+      message: `Plugin ${command} did not complete.`,
+    }));
+  }
+  try {
+    sourceFingerprint = (await fingerprintDevelopmentSource({ sourceDirectory })).fingerprint;
+  } catch (error) {
+    diagnostics.push(developmentBuildDiagnostic(error, {
+      code: "SOURCE_FINGERPRINT_FAILED",
+      phase: "source-fingerprint",
+      message: "Plugin source fingerprint could not be created.",
+    }));
+  }
+  try {
+    outputs = await fingerprintDevelopmentBuildOutputs({ sourceDirectory });
+  } catch (error) {
+    diagnostics.push(developmentBuildDiagnostic(error, {
+      code: "OUTPUT_FINGERPRINT_FAILED",
+      phase: "output-fingerprint",
+      message: "Plugin build output fingerprint could not be created.",
+    }));
+  }
+  return {
+    result: createDevelopmentBuildResult({
+      command,
+      success: execution !== null && diagnostics.length === 0,
+      sourceFingerprint,
+      ...outputs,
+      startedAt,
+      completedAt: new Date().toISOString(),
+      diagnostics,
+    }),
+    execution,
+  };
+}
+
 async function run() {
   const [command, ...rest] = process.argv.slice(2);
   if (!command || command === "help" || command === "--help") {
@@ -252,16 +309,38 @@ async function run() {
     return;
   }
   if (command === "build") {
+    if (options.get("json") === true) {
+      const { result } = await runDevelopmentCommand("build", positionals[0], () => buildPluginWorker({ sourceDirectory: positionals[0] }));
+      writeDevelopmentResult(result);
+      if (!result.success) process.exitCode = 1;
+      return;
+    }
     const result = await buildPluginWorker({ sourceDirectory: positionals[0] });
     console.log(`Built self-contained SPS Worker: ${result.outputPath}`);
     return;
   }
   if (command === "test") {
+    if (options.get("json") === true) {
+      const { result } = await runDevelopmentCommand("test", positionals[0], () => testPluginWorker(positionals[0]));
+      writeDevelopmentResult(result);
+      if (!result.success) process.exitCode = 1;
+      return;
+    }
     const result = await testPluginWorker(positionals[0]);
     console.log(`SPS Worker lifecycle conformance passed: ${result.workerPath}`);
     return;
   }
   if (command === "validate") {
+    if (options.get("json") === true) {
+      const { result } = await runDevelopmentCommand("validate", positionals[0], async () => {
+        const report = await inspectPluginDirectory(positionals[0]);
+        if (!report.valid) throw new Error("Plugin validation did not pass.");
+        return report;
+      });
+      writeDevelopmentResult(result);
+      if (!result.success) process.exitCode = 1;
+      return;
+    }
     const report = await inspectPluginDirectory(positionals[0]);
     console.log(JSON.stringify(report, null, 2));
     if (!report.valid) process.exitCode = 1;
@@ -366,6 +445,21 @@ async function run() {
 }
 
 run().catch((error) => {
-  console.error(error instanceof Error ? error.message : String(error));
+  if (process.argv.includes("--json") && ["build", "validate", "test"].includes(process.argv[2] ?? "")) {
+    const now = new Date().toISOString();
+    writeDevelopmentResult(createDevelopmentBuildResult({
+      command: process.argv[2],
+      success: false,
+      startedAt: now,
+      completedAt: now,
+      diagnostics: [developmentBuildDiagnostic(error, {
+        code: "COMMAND_FAILED",
+        phase: "command",
+        message: "The development command did not complete.",
+      })],
+    }));
+  } else {
+    console.error(error instanceof Error ? error.message : String(error));
+  }
   process.exitCode = 1;
 });
