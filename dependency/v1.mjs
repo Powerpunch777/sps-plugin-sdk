@@ -57,21 +57,29 @@ function version(value, label) {
 function semverParts(value) {
   const match = SEMVER.exec(value);
   if (!match) throw new SpsPluginDependencyError("SPS_PLUGIN_DEPENDENCY_INVALID", "Version is invalid.");
-  return { major: Number(match[1]), minor: Number(match[2]), patch: Number(match[3]), prerelease: match[4] ? match[4].split(".") : [] };
+  return { major: match[1], minor: match[2], patch: match[3], prerelease: match[4] ? match[4].split(".") : [] };
+}
+
+function compareNumericIdentifier(left, right) {
+  if (left.length !== right.length) return left.length < right.length ? -1 : 1;
+  return left === right ? 0 : left < right ? -1 : 1;
 }
 
 /** Compares two already-valid Semantic Versions without relying on a runtime package. */
 export function compareSpsPluginVersionsV1(left, right) {
   const a = semverParts(version(left, "left version"));
   const b = semverParts(version(right, "right version"));
-  for (const key of ["major", "minor", "patch"]) if (a[key] !== b[key]) return a[key] < b[key] ? -1 : 1;
+  for (const key of ["major", "minor", "patch"]) {
+    const comparison = compareNumericIdentifier(a[key], b[key]);
+    if (comparison !== 0) return comparison;
+  }
   if (a.prerelease.length === 0 || b.prerelease.length === 0) return a.prerelease.length === b.prerelease.length ? 0 : a.prerelease.length === 0 ? 1 : -1;
   for (let index = 0; index < Math.max(a.prerelease.length, b.prerelease.length); index += 1) {
     if (a.prerelease[index] === undefined) return -1;
     if (b.prerelease[index] === undefined) return 1;
     if (a.prerelease[index] === b.prerelease[index]) continue;
     const aNumeric = /^\d+$/.test(a.prerelease[index]); const bNumeric = /^\d+$/.test(b.prerelease[index]);
-    if (aNumeric && bNumeric) return Number(a.prerelease[index]) < Number(b.prerelease[index]) ? -1 : 1;
+    if (aNumeric && bNumeric) return compareNumericIdentifier(a.prerelease[index], b.prerelease[index]);
     if (aNumeric !== bNumeric) return aNumeric ? -1 : 1;
     return a.prerelease[index] < b.prerelease[index] ? -1 : 1;
   }
@@ -153,6 +161,11 @@ export function defineSpsPluginDependencyManifestV1(input) {
   };
   for (const declaration of [...normalized.requiredDependencies, ...normalized.conflicts]) {
     if (declaration.id === id) throw new SpsPluginDependencyError("SPS_PLUGIN_DEPENDENCY_INVALID", "A plugin must not declare itself as a required dependency or conflict.");
+  }
+  const requiredIds = new Set(normalized.requiredDependencies.map((dependency) => dependency.id));
+  const contradictory = normalized.conflicts.find((conflict) => requiredIds.has(conflict.id));
+  if (contradictory) {
+    throw new SpsPluginDependencyError("SPS_PLUGIN_DEPENDENCY_INVALID", `A plugin must not both require and conflict with ${contradictory.id}.`);
   }
   return Object.freeze(normalized);
 }

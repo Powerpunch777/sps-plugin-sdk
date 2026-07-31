@@ -27,6 +27,8 @@ test("compares SemVer including prerelease precedence and inclusive version boun
   assert.equal(compareSpsPluginVersionsV1("1.0.0-alpha.1", "1.0.0-alpha.beta"), -1);
   assert.equal(compareSpsPluginVersionsV1("1.0.0-1", "1.0.0-alpha"), -1);
   assert.equal(compareSpsPluginVersionsV1("1.0.0", "1.0.0-rc.1"), 1);
+  assert.equal(compareSpsPluginVersionsV1("9007199254740993.0.0", "9007199254740992.0.0"), 1);
+  assert.equal(compareSpsPluginVersionsV1("1.0.0-9007199254740993", "1.0.0-9007199254740992"), 1);
   const report = analyzeSpsPluginDependenciesV1({ plugins: [
     plugin("com.example.app", "1.0.0", { requiredDependencies: [{ id: "com.example.runtime", minVersion: "1.0.0", maxVersion: "1.0.0" }] }),
     plugin("com.example.runtime", "1.0.0"),
@@ -101,6 +103,7 @@ test("rejects malformed declarations, bounds, duplicate references, accessors, c
   assert.throws(() => defineSpsPluginDependencyManifestV1(plugin("com.example.app", "1.0.0", { requiredDependencies: [{ id: "com.example.runtime", minVersion: "2.0.0", maxVersion: "1.0.0" }] })), SpsPluginDependencyError);
   assert.throws(() => defineSpsPluginDependencyManifestV1(plugin("com.example.app", "1.0.0", { optionalDependencies: [{ id: "com.example.x", service: "x" }] })), SpsPluginDependencyError);
   assert.throws(() => defineSpsPluginDependencyManifestV1(plugin("com.example.app", "1.0.0", { conflicts: [{ id: "com.example.app" }] })), SpsPluginDependencyError);
+  assert.throws(() => defineSpsPluginDependencyManifestV1(plugin("com.example.app", "1.0.0", { requiredDependencies: [{ id: "com.example.runtime" }], conflicts: [{ id: "com.example.runtime" }] })), SpsPluginDependencyError);
   assert.throws(() => defineSpsPluginDependencyManifestV1(plugin("com.example.app", "1.0.0", { requiredDependencies: [{ id: "com.example.x" }, { id: "com.example.x" }] })), SpsPluginDependencyError);
   const accessor = { id: "com.example.app", version: "1.0.0" };
   Object.defineProperty(accessor, "requiredDependencies", { enumerable: true, get() { throw new Error("must not run"); } });
