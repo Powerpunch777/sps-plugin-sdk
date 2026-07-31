@@ -355,7 +355,7 @@ The six operations are separated into five namespaces:
 
 Lifecycle is deliberately non-mutating. Its only accepted execution value is
 `"proposed"`, and every proposal declares `requiresHostConfirmation: true`.
-It cannot install, activate, update, deactivate, or uninstall a plugin.
+It cannot install, activate, update, disable, or remove a plugin.
 Those actions remain Core lifecycle operations after explicit Host review.
 
 Authoring state is referenced by a provider-neutral `authoringSessionId`

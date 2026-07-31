@@ -55,6 +55,20 @@ test("lifecycle proposals are non-mutating contracts and explicitly require host
   });
   assert.deepEqual(proposal.output, { proposalId: "sps.proposal.001", action: "update", targetPluginId: "com.example.demo", execution: "proposed", requiresHostConfirmation: true });
   assert.throws(() => defineSpsPluginAuthoringResultV1({ ...proposal, output: { ...proposal.output, execution: "executed" } }), { code: "SPS_PLUGIN_AUTHORING_INVALID" });
+  for (const action of ["disable", "remove"]) {
+    assert.equal(defineSpsPluginAuthoringRequestV1({
+      authoringSessionId: session,
+      operation: "createLifecycleProposal",
+      input: { projectId: "sps.project.demo", buildId: "sps.build.001", action, targetPluginId: "com.example.demo", reason: "Host review requested" },
+    }).input.action, action);
+  }
+  for (const legacyAction of ["deactivate", "uninstall"]) {
+    assert.throws(() => defineSpsPluginAuthoringRequestV1({
+      authoringSessionId: session,
+      operation: "createLifecycleProposal",
+      input: { projectId: "sps.project.demo", buildId: "sps.build.001", action: legacyAction, targetPluginId: "com.example.demo", reason: "Host review requested" },
+    }), { code: "SPS_PLUGIN_AUTHORING_INVALID" });
+  }
 });
 
 test("append-only authoring evidence preserves earlier records and rejects duplicate references", () => {
