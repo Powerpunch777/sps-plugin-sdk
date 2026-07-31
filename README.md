@@ -170,6 +170,29 @@ claimed until their Core contracts are implemented.
 None of these contracts defines task semantics, Rooms, roles, approvals, or a
 memory strategy. Those meanings remain plugin-owned.
 
+## Preview fixtures
+
+Plugin Preview can inject a small, read-only fixture into a browser renderer so
+UI can be checked as a Host or Member with Node, Runtime, and Source examples
+enabled or disabled. The fixture also selects a `desktop` or `mobile` viewport
+and a `live`, `empty`, `loading`, or `error` UI state. It is not an execution
+context: the contract rejects unknown fields, raw credentials, secrets, and
+absolute local paths.
+
+```js
+import { readSpsPluginPreviewFixtureV1 } from "@sonparkserver/plugin-sdk/preview/fixtures-v1.mjs";
+
+const preview = readSpsPluginPreviewFixtureV1();
+if (preview?.fixtures.runtime.enabled) {
+  renderRuntimeExample(preview.fixtures.runtime.payload);
+}
+```
+
+The SPS Host owns injection through
+`globalThis.__SPS_PLUGIN_PREVIEW_FIXTURE_V1__`. Plugins may read it, but must
+never write it or treat it as a source of paths, credentials, permissions, or
+live Host data.
+
 ## Quick start
 
 Node.js 22 or later is required.
