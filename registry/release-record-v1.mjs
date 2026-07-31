@@ -196,7 +196,15 @@ export function validateReleaseRecord(record) {
   pushIf(isPlainObject(record.compatibility), errors, "compatibility must be an object.");
   pushIf(typeof record.compatibility?.sps === "string" && record.compatibility.sps.length > 0 && record.compatibility.sps.length <= 256, errors, "compatibility.sps is required.");
   pushIf(Number.isSafeInteger(record.compatibility?.pluginApi) && record.compatibility.pluginApi >= 1 && record.compatibility.pluginApi <= 100, errors, "compatibility.pluginApi must be a positive integer.");
-  pushIf(EXTENSION_PROFILE_VERSION.test(record.compatibility?.extensionProfile ?? ""), errors, "compatibility.extensionProfile must be a major.minor version.");
+  // Registry schema v1 originally allowed this field to be absent. Preserve
+  // signature compatibility with those immutable records; consumers treat an
+  // omitted profile as the v1 baseline (1.0).
+  pushIf(
+    record.compatibility?.extensionProfile === undefined
+      || EXTENSION_PROFILE_VERSION.test(record.compatibility.extensionProfile),
+    errors,
+    "compatibility.extensionProfile must be a major.minor version when present.",
+  );
   pushIf(VISIBILITY.has(record.visibility), errors, "visibility must be public, unlisted, or private.");
   if (record.catalog !== undefined) {
     pushIf(isPlainObject(record.catalog), errors, "catalog must be an object when present.");

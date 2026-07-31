@@ -47,14 +47,23 @@ test("validates and verifies a signed immutable release record", () => {
   assert.deepEqual(verifyReleaseRecordSignature(record, publisherPublicKey), { valid: true, errors: [] });
 });
 
-test("requires a signed SPS extension profile declaration", () => {
+test("accepts legacy schema v1 records without an extension profile", () => {
   const record = makeRecord({
     compatibility: { sps: ">=0.4.0 <0.5.0", pluginApi: 1 },
   });
 
+  assert.deepEqual(validateReleaseRecord(record), { valid: true, errors: [] });
+  assert.deepEqual(verifyReleaseRecordSignature(record, publisherPublicKey), { valid: true, errors: [] });
+});
+
+test("rejects a malformed signed extension profile declaration", () => {
+  const record = makeRecord({
+    compatibility: { sps: ">=0.4.0 <0.5.0", pluginApi: 1, extensionProfile: "latest" },
+  });
+
   const validation = validateReleaseRecord(record);
   assert.equal(validation.valid, false);
-  assert.ok(validation.errors.includes("compatibility.extensionProfile must be a major.minor version."));
+  assert.ok(validation.errors.includes("compatibility.extensionProfile must be a major.minor version when present."));
 });
 
 test("rejects a release record when a signed field changes", () => {
