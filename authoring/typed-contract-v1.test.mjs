@@ -28,6 +28,24 @@ test("authoring requests classify all v1 operations into separate provider-neutr
   }
 });
 
+test("plugin project requests use only current Core capability names", () => {
+  const request = defineSpsPluginAuthoringRequestV1({
+    authoringSessionId: session,
+    operation: "createPluginProject",
+    input: {
+      templateId: "sps.template.basic",
+      displayName: "My Builder",
+      requestedCapabilities: ["ui.workspaceShell.provide", "ui.dashboard.contribute", "inbox.items.publish"],
+    },
+  });
+  assert.deepEqual(request.input.requestedCapabilities, ["inbox.items.publish", "ui.dashboard.contribute", "ui.workspaceShell.provide"]);
+  assert.throws(() => defineSpsPluginAuthoringRequestV1({
+    authoringSessionId: session,
+    operation: "createPluginProject",
+    input: { templateId: "sps.template.basic", displayName: "My Builder", requestedCapabilities: ["workspace.shell.register"] },
+  }), { code: "SPS_PLUGIN_AUTHORING_INVALID" });
+});
+
 test("authoring result contracts accept only safe, typed output for every v1 operation", () => {
   const hash = "a".repeat(64);
   const cases = [
