@@ -195,6 +195,27 @@ test("declared platform registers events, dispatches tool/event/job handlers, an
   await worker.closed;
 });
 
+test("declared platform serves UI data through the Core plugin bridge", async () => {
+  const platform = defineSpsPlatformContract({
+    data: [{ key: "workspace.status", async handler(params, api) {
+      const value = await api.state.get({ scopeKind: "company", scopeId: params.companyId, stateKey: "status" });
+      return { companyId: params.companyId, filter: params.filter, value };
+    } }],
+  });
+  const { input, lines, worker } = createHarness(defineSpsPlugin({ platform }));
+  input.write('{"jsonrpc":"2.0","id":1,"method":"initialize"}\n');
+  await eventually(() => lines.length === 1);
+  assert.deepEqual(lines[0], { jsonrpc: "2.0", id: 1, result: { ok: true, supportedMethods: ["executeTool", "onEvent", "runJob", "getData"] } });
+  input.write('{"jsonrpc":"2.0","id":2,"method":"getData","params":{"key":"workspace.status","companyId":"company-1","params":{"filter":"active"},"renderEnvironment":{"surface":"desktop"}}}\n');
+  await eventually(() => lines.length === 2);
+  assert.equal(lines[1].method, "state.get");
+  input.write(`{"jsonrpc":"2.0","id":"${lines[1].id}","result":{"ready":true}}\n`);
+  await eventually(() => lines.length === 3);
+  assert.deepEqual(lines[2], { jsonrpc: "2.0", id: 2, result: { companyId: "company-1", filter: "active", value: { ready: true } } });
+  input.end();
+  await worker.closed;
+});
+
 test("platform rejects unknown dispatch keys and preserves concurrent Core invocation IDs", async () => {
   const platform = defineSpsPlatformContract({
     tools: [{ name: "stateful", declaration: { displayName: "Stateful", description: "Stores", parametersSchema: {} }, async handler(params, _context, api) {

@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.11.0 - 2026-08-01
+
+- Add a public, read-only UI data-provider declaration to the platform contract.
+- Dispatch Core `getData` requests through the portable Worker protocol while
+  preserving company and render-environment scope.
+- Keep UI data providers on the same invocation-isolated state bridge used by
+  public tools, events, and jobs.
+
 ## 0.10.0 - 2026-07-31
 
 - Keep the typed authoring contract read-only for Marketplace Assistant use.

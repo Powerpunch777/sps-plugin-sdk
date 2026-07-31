@@ -4,7 +4,7 @@ import { SPS_RUNTIME_OPERATIONS } from "../runtime/index.mjs";
 
 const RUNTIME_OPERATION_SET = new Set(SPS_RUNTIME_OPERATIONS);
 const LIFECYCLE_METHODS = new Set(["initialize", "health", "shutdown"]);
-const PLATFORM_METHODS = new Set(["executeTool", "onEvent", "runJob"]);
+const PLATFORM_METHODS = new Set(["executeTool", "onEvent", "runJob", "getData"]);
 const PLATFORM_HOST_OPERATIONS = new Set([
   "state.get", "state.set", "state.delete", "events.emit", "events.subscribe",
   "inbox.publish", "inbox.update", "inbox.withdraw",
@@ -57,7 +57,7 @@ function validateHandlers(handlers) {
     if (typeof handlers[method] === "function") result[method] = handlers[method];
   }
   const platform = handlers.platform;
-  if (platform !== undefined && (!isRecord(platform) || platform.contractVersion !== "1.0" || !Array.isArray(platform.tools) || !Array.isArray(platform.events) || !Array.isArray(platform.jobs))) {
+  if (platform !== undefined && (!isRecord(platform) || platform.contractVersion !== "1.0" || !Array.isArray(platform.tools) || !Array.isArray(platform.events) || !Array.isArray(platform.jobs) || !Array.isArray(platform.data))) {
     throw new TypeError("SPS Worker platform must be a defineSpsPlatformContract result.");
   }
   return Object.freeze({ ...result, ...(platform === undefined ? {} : { platform }) });
@@ -274,6 +274,20 @@ export function runSpsWorker(plugin, options = {}) {
   }
 
   async function dispatchPlatformMethod(method, params) {
+    if (method === "getData") {
+      if (!isRecord(params) || typeof params.key !== "string" || !isRecord(params.params ?? {}) || !isJsonValue(params.params ?? {}) ||
+        (params.companyId !== undefined && typeof params.companyId !== "string") ||
+        (params.renderEnvironment !== undefined && !isJsonValue(params.renderEnvironment))) {
+        throw new TypeError("Invalid getData params.");
+      }
+      const registration = definition.handlers.platform?.data.find((provider) => provider.key === params.key);
+      if (!registration) throw Object.assign(new Error(`Unknown SPS Platform data provider: ${params.key}`), { code: -32601 });
+      return registration.handler({
+        ...(params.params ?? {}),
+        ...(params.companyId === undefined ? {} : { companyId: params.companyId }),
+        ...(params.renderEnvironment === undefined ? {} : { renderEnvironment: params.renderEnvironment }),
+      }, platform);
+    }
     if (method === "executeTool") {
       if (!isRecord(params) || typeof params.toolName !== "string" || !isJsonValue(params.parameters) || !isJsonValue(params.runContext)) throw new TypeError("Invalid executeTool params.");
       const registration = definition.handlers.platform?.tools.find((tool) => tool.name === params.toolName);
@@ -314,7 +328,10 @@ export function runSpsWorker(plugin, options = {}) {
         }
         lifecycleState = "ready";
         const supportedMethods = ["health", "shutdown"].filter((name) => typeof definition.handlers[name] === "function");
-        if (definition.handlers.platform) supportedMethods.push("executeTool", "onEvent", "runJob");
+        if (definition.handlers.platform) {
+          supportedMethods.push("executeTool", "onEvent", "runJob");
+          if (definition.handlers.platform.data.length > 0) supportedMethods.push("getData");
+        }
         sendResponse(id, { ok: true, supportedMethods });
       } catch (cause) {
         lifecycleState = "new";

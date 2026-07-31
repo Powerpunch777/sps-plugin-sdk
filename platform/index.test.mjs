@@ -8,22 +8,26 @@ import {
   isJsonValue,
 } from "./index.mjs";
 
-test("declares the Core-mapped tool, event, job, and state surface", () => {
+test("declares the Core-mapped tool, event, job, data, and state surface", () => {
   const tool = async () => ({ content: "ok", data: { ok: true } });
+  const dataProvider = async () => ({ status: "ok" });
   const contract = defineSpsPlatformContract({
     capabilities: SPS_PLATFORM_CAPABILITIES,
     tools: [{ name: "search.docs", declaration: { displayName: "Search docs", description: "Searches docs", parametersSchema: { type: "object" } }, handler: tool }],
     events: [{ name: "document.changed", filter: { source: "sync" }, handler: async () => undefined }],
     jobs: [{ jobKey: "refresh.index", handler: async () => undefined }],
+    data: [{ key: "workspace.status", handler: dataProvider }],
   });
 
   assert.deepEqual(contract.capabilities, SPS_PLATFORM_CAPABILITIES);
   assert.equal(contract.tools[0].handler, tool);
   assert.equal(contract.events[0].name, "document.changed");
   assert.equal(contract.jobs[0].jobKey, "refresh.index");
+  assert.equal(contract.data[0].handler, dataProvider);
   assert(Object.isFrozen(contract));
   assert(Object.isFrozen(contract.tools));
   assert(Object.isFrozen(contract.tools[0]));
+  assert(Object.isFrozen(contract.data));
 });
 
 test("uses Core plugin state keys without inventing store registration", () => {
@@ -43,6 +47,7 @@ test("rejects undeclared capabilities, invalid registrations, and duplicate name
   assert.throws(() => defineSpsPlatformContract({ tools: [{ name: "tool", declaration: { displayName: "Tool", description: "Does work", parametersSchema: [] }, handler() {} }] }), /parametersSchema/);
   assert.throws(() => defineSpsPlatformContract({ events: [{ name: "changed", handler: true }] }), /event handler/);
   assert.throws(() => defineSpsPlatformContract({ jobs: [{ jobKey: "sync", handler() {} }, { jobKey: "sync", handler() {} }] }), /duplicate/);
+  assert.throws(() => defineSpsPlatformContract({ data: [{ key: "status", handler() {} }, { key: "status", handler() {} }] }), /duplicate/);
 });
 
 test("accepts only finite, acyclic plain JSON payloads", () => {

@@ -113,6 +113,13 @@ export function defineJob(jobKey, handler) {
   return freezeDeclaration(job);
 }
 
+/** Declares a read-only UI data provider served through Core's plugin bridge. */
+export function defineDataProvider(key, handler) {
+  const provider = { key: assertNonEmptyString(key, "data provider key"), handler };
+  if (typeof provider.handler !== "function") throw new TypeError("data provider handler must be a function.");
+  return freezeDeclaration(provider);
+}
+
 /** Validates the exact state key accepted by Core's plugin.state client. */
 export function defineSpsStateKey(key) {
   const value = assertRecord(key, "state key");
@@ -179,5 +186,9 @@ export function defineSpsPlatformContract(contract = {}) {
       const job = assertRecord(entry, "job registration");
       return defineJob(job.jobKey, job.handler);
     }, (job) => job.jobKey, "jobs"),
+    data: defineUnique(value.data, (entry) => {
+      const provider = assertRecord(entry, "data provider registration");
+      return defineDataProvider(provider.key, provider.handler);
+    }, (provider) => provider.key, "data providers"),
   });
 }

@@ -46,6 +46,7 @@ export interface SpsWorkerPlatformContract {
   readonly tools: readonly unknown[];
   readonly events: readonly unknown[];
   readonly jobs: readonly unknown[];
+  readonly data: readonly unknown[];
 }
 
 export interface SpsWorkerLifecycleContext {
