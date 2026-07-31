@@ -7,6 +7,30 @@ export type SpsPluginAuthoringStatusV1 = "completed" | "needs_input" | "failed";
 export type SpsPluginAuthoringEvidenceRefV1 = `spsae_${string}`;
 export type SpsPluginAuthoringSessionIdV1 = `spsas_${string}`;
 export type SpsPluginAuthoringErrorCode = "SPS_PLUGIN_AUTHORING_INVALID" | "SPS_PLUGIN_AUTHORING_UNSAFE";
+export type SpsPluginLifecycleProposalActionV1 = "install" | "activate" | "update" | "disable" | "remove";
+export type SpsPluginLifecycleProposalScopeV1 = "company" | "host";
+export interface SpsPluginLifecycleProposalTargetV1 {
+  readonly pluginKey: string;
+  readonly pluginId?: string | null;
+  readonly packageName?: string | null;
+  readonly version?: string | null;
+  readonly registryStageId?: string | null;
+  readonly scope: SpsPluginLifecycleProposalScopeV1;
+}
+export interface SpsPluginLifecycleProposalInputV1 {
+  readonly projectId: string;
+  readonly buildId: string;
+  readonly action: SpsPluginLifecycleProposalActionV1;
+  readonly target: SpsPluginLifecycleProposalTargetV1;
+  readonly reason: string;
+}
+export interface SpsPluginLifecycleProposalOutputV1 {
+  readonly proposalId: string;
+  readonly action: SpsPluginLifecycleProposalActionV1;
+  readonly target: SpsPluginLifecycleProposalTargetV1;
+  readonly execution: "proposed";
+  readonly requiresHostConfirmation: true;
+}
 export class SpsPluginAuthoringError extends Error { readonly code: SpsPluginAuthoringErrorCode; }
 export interface SpsPluginAuthoringEvidenceV1 { readonly schemaVersion: "sps-plugin-authoring/v1"; readonly evidenceRef: SpsPluginAuthoringEvidenceRefV1; readonly operation: SpsPluginAuthoringOperationV1; readonly kind: "request" | "result" | "review" | "diagnostic"; readonly summary: string; readonly occurredAt: string; }
 export interface SpsPluginAuthoringSessionV1 { readonly schemaVersion: "sps-plugin-authoring/v1"; readonly authoringSessionId: SpsPluginAuthoringSessionIdV1; readonly evidence: readonly SpsPluginAuthoringEvidenceV1[]; }

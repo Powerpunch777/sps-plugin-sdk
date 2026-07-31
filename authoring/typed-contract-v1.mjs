@@ -22,7 +22,9 @@ const EVIDENCE_ID = /^spsae_[a-z0-9]{8,64}$/;
 const SHA256 = /^[a-f0-9]{64}$/;
 const ISO = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
 const SECRET_TEXT = /(?:-----BEGIN(?: [A-Z0-9]+)? PRIVATE KEY-----|\bBearer\s+[A-Za-z0-9._~+/=-]{8,}|\b(?:sk|pk|rk|ghp|github_pat|xox[abprs]|AIza)[_-]?[A-Za-z0-9_-]{12,}|\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}|(?:api[_-]?key|access[_-]?token|client[_-]?secret|password|credential|secret|token)\s*[:=])/i;
-const EXTERNAL_LOCATION = /(?:[A-Za-z]:[\\/]|\\\\|\/(?:Users|home|var|tmp|etc|opt|mnt|private|Volumes|root|ProgramData|Windows)(?:[\\/]|$)|~[\\/]|(?:file|ssh|git\+ssh):)/i;
+const EXTERNAL_LOCATION = /(?:^[/\\]|[A-Za-z]:[\\/]|\\\\|~[\\/]|[A-Za-z][A-Za-z0-9+.-]*:\/\/)/i;
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const LIFECYCLE_TARGET_KEYS = new Set(["pluginKey", "pluginId", "packageName", "version", "registryStageId", "scope"]);
 
 export class SpsPluginAuthoringError extends Error {
   constructor(code, message) { super(message); this.name = "SpsPluginAuthoringError"; this.code = code; }
@@ -76,7 +78,17 @@ function normalizeRequestInput(operation, input) {
     case "runAuthoringStep": { const v = keys(input, "runAuthoringStep.input", new Set(["projectId", "step"])); return Object.freeze({ projectId: id(v.projectId, "runAuthoringStep.input.projectId"), step: choice(v.step, "runAuthoringStep.input.step", ["plan", "generate", "refine", "build", "validate", "test"]) }); }
     case "inspectBuild": { const v = keys(input, "inspectBuild.input", new Set(["projectId", "buildId"])); return Object.freeze({ projectId: id(v.projectId, "inspectBuild.input.projectId"), buildId: id(v.buildId, "inspectBuild.input.buildId") }); }
     case "openPreview": { const v = keys(input, "openPreview.input", new Set(["projectId", "buildId", "surface"])); return Object.freeze({ projectId: id(v.projectId, "openPreview.input.projectId"), buildId: id(v.buildId, "openPreview.input.buildId"), surface: choice(v.surface, "openPreview.input.surface", ["shell", "dashboard", "inbox", "settings", "standalone"]) }); }
-    case "createLifecycleProposal": { const v = keys(input, "createLifecycleProposal.input", new Set(["projectId", "buildId", "action", "targetPluginId", "reason"])); return Object.freeze({ projectId: id(v.projectId, "createLifecycleProposal.input.projectId"), buildId: id(v.buildId, "createLifecycleProposal.input.buildId"), action: choice(v.action, "createLifecycleProposal.input.action", ["install", "activate", "update", "disable", "remove"]), targetPluginId: id(v.targetPluginId, "createLifecycleProposal.input.targetPluginId"), reason: text(v.reason, "createLifecycleProposal.input.reason", 512) }); }
+    case "createLifecycleProposal": {
+      const v = keys(input, "createLifecycleProposal.input", new Set(["projectId", "buildId", "action", "target", "reason"]));
+      const action = choice(v.action, "createLifecycleProposal.input.action", ["install", "activate", "update", "disable", "remove"]);
+      return Object.freeze({
+        projectId: id(v.projectId, "createLifecycleProposal.input.projectId"),
+        buildId: id(v.buildId, "createLifecycleProposal.input.buildId"),
+        action,
+        target: normalizeLifecycleTarget(v.target, action, "createLifecycleProposal.input.target"),
+        reason: text(v.reason, "createLifecycleProposal.input.reason", 512),
+      });
+    }
     default: throw invalid("operation is unsupported.");
   }
 }
@@ -87,16 +99,52 @@ function normalizeOutput(operation, output) {
     case "runAuthoringStep": { const v = keys(output, "runAuthoringStep.output", new Set(["projectId", "buildId", "step", "outcome"])); return Object.freeze({ projectId: id(v.projectId, "runAuthoringStep.output.projectId"), buildId: id(v.buildId, "runAuthoringStep.output.buildId"), step: choice(v.step, "runAuthoringStep.output.step", ["plan", "generate", "refine", "build", "validate", "test"]), outcome: choice(v.outcome, "runAuthoringStep.output.outcome", ["completed", "needs_input", "failed"]) }); }
     case "inspectBuild": { const v = keys(output, "inspectBuild.output", new Set(["projectId", "buildId", "status", "manifestSha256", "workerSha256", "uiSha256"])); return Object.freeze({ projectId: id(v.projectId, "inspectBuild.output.projectId"), buildId: id(v.buildId, "inspectBuild.output.buildId"), status: choice(v.status, "inspectBuild.output.status", ["valid", "invalid", "incomplete"]), ...(v.manifestSha256 === undefined ? {} : { manifestSha256: hash(v.manifestSha256, "inspectBuild.output.manifestSha256") }), ...(v.workerSha256 === undefined ? {} : { workerSha256: hash(v.workerSha256, "inspectBuild.output.workerSha256") }), ...(v.uiSha256 === undefined ? {} : { uiSha256: hash(v.uiSha256, "inspectBuild.output.uiSha256") }) }); }
     case "openPreview": { const v = keys(output, "openPreview.output", new Set(["projectId", "buildId", "previewId", "state"])); return Object.freeze({ projectId: id(v.projectId, "openPreview.output.projectId"), buildId: id(v.buildId, "openPreview.output.buildId"), previewId: id(v.previewId, "openPreview.output.previewId"), state: choice(v.state, "openPreview.output.state", ["ready", "unavailable", "failed"]) }); }
-    case "createLifecycleProposal": { const v = keys(output, "createLifecycleProposal.output", new Set(["proposalId", "action", "targetPluginId", "execution", "requiresHostConfirmation"])); const execution = choice(v.execution, "createLifecycleProposal.output.execution", ["proposed"]); return Object.freeze({ proposalId: id(v.proposalId, "createLifecycleProposal.output.proposalId"), action: choice(v.action, "createLifecycleProposal.output.action", ["install", "activate", "update", "disable", "remove"]), targetPluginId: id(v.targetPluginId, "createLifecycleProposal.output.targetPluginId"), execution, requiresHostConfirmation: boolean(v.requiresHostConfirmation, "createLifecycleProposal.output.requiresHostConfirmation") }); }
+    case "createLifecycleProposal": {
+      const v = keys(output, "createLifecycleProposal.output", new Set(["proposalId", "action", "target", "execution", "requiresHostConfirmation"]));
+      const action = choice(v.action, "createLifecycleProposal.output.action", ["install", "activate", "update", "disable", "remove"]);
+      const execution = choice(v.execution, "createLifecycleProposal.output.execution", ["proposed"]);
+      if (v.requiresHostConfirmation !== true) throw invalid("createLifecycleProposal.output.requiresHostConfirmation must be true.");
+      return Object.freeze({
+        proposalId: id(v.proposalId, "createLifecycleProposal.output.proposalId"),
+        action,
+        target: normalizeLifecycleTarget(v.target, action, "createLifecycleProposal.output.target"),
+        execution,
+        requiresHostConfirmation: true,
+      });
+    }
     default: throw invalid("operation is unsupported.");
   }
 }
 function integer(value, label, min, max) { if (!Number.isSafeInteger(value) || value < min || value > max) throw invalid(`${label} must be an integer between ${min} and ${max}.`); return value; }
-function boolean(value, label) { if (typeof value !== "boolean") throw invalid(`${label} must be a boolean.`); return value; }
 function choice(value, label, values) { if (typeof value !== "string" || !values.includes(value)) throw invalid(`${label} is invalid.`); return value; }
 function enumArray(value, label, values, maximum) { const normalized = array(value, label, maximum, (item, itemLabel) => choice(item, itemLabel, values)); if (new Set(normalized).size !== normalized.length) throw invalid(`${label} must not contain duplicates.`); return Object.freeze([...normalized].sort()); }
 function semver(value, label) { if (typeof value !== "string" || !/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/.test(value)) throw invalid(`${label} is invalid.`); return value; }
 function hash(value, label) { if (typeof value !== "string" || !SHA256.test(value)) throw invalid(`${label} must be a SHA-256 hex digest.`); return value; }
+function uuid(value, label) { if (typeof value !== "string" || !UUID.test(value)) throw invalid(`${label} must be a UUID.`); return value; }
+function pluginKey(value, label) {
+  const normalized = text(value, label, 200);
+  if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/.test(normalized) || normalized.includes("..")) throw invalid(`${label} is invalid.`);
+  return normalized;
+}
+function optionalValue(source, key, normalize, label) {
+  if (source[key] === undefined) return {};
+  return { [key]: source[key] === null ? null : normalize(source[key], label) };
+}
+function normalizeLifecycleTarget(input, action, label) {
+  const v = keys(input, label, LIFECYCLE_TARGET_KEYS);
+  const target = {
+    pluginKey: pluginKey(v.pluginKey, `${label}.pluginKey`),
+    ...optionalValue(v, "pluginId", uuid, `${label}.pluginId`),
+    ...optionalValue(v, "packageName", (value, itemLabel) => text(value, itemLabel, 300), `${label}.packageName`),
+    ...optionalValue(v, "version", semver, `${label}.version`),
+    ...optionalValue(v, "registryStageId", uuid, `${label}.registryStageId`),
+    scope: choice(v.scope, `${label}.scope`, ["company", "host"]),
+  };
+  if (target.scope === "company" && !["activate", "disable"].includes(action)) throw invalid(`${label}.scope must be host for ${action} proposals.`);
+  if (action === "install" && (target.scope !== "host" || !target.packageName || !target.version || !target.registryStageId)) throw invalid(`${label} install targets require packageName, version, registryStageId, and host scope.`);
+  if (action === "update" && (target.scope !== "host" || !target.version || !target.registryStageId)) throw invalid(`${label} update targets require version, registryStageId, and host scope.`);
+  return Object.freeze(target);
+}
 
 /** Strictly normalizes a provider-neutral authoring request. It has no side effects. */
 export function defineSpsPluginAuthoringRequestV1(input) {

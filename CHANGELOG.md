@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.9.0 - 2026-07-31
+
+- Correct the lifecycle authoring contract to use Core's exact nested `target`
+  object instead of the legacy `targetPluginId` field.
+- Add typed `pluginKey`, optional plugin/package/version/Registry stage fields,
+  and required company/Host scope with the Core action matrix.
+- Require lifecycle results to return the exact target, `execution: "proposed"`,
+  and `requiresHostConfirmation: true`.
+- Reject target/evidence URLs, paths, credential-like text, and unknown keys.
+
 ## 0.8.0 - 2026-07-31
 
 - Add the provider-neutral Plugin Discovery & Builder typed authoring contract

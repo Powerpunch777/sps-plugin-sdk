@@ -375,8 +375,20 @@ import {
 
 const request = defineSpsPluginAuthoringRequestV1({
   authoringSessionId: "spsas_0123456789abcdef",
-  operation: "searchCatalog",
-  input: { query: "project workplane", limit: 5 },
+  operation: "createLifecycleProposal",
+  input: {
+    projectId: "sps.project.demo",
+    buildId: "sps.build.001",
+    action: "install",
+    target: {
+      pluginKey: "com.example.workplane",
+      packageName: "@sps/workplane",
+      version: "1.2.3",
+      registryStageId: "01234567-89ab-4cde-8fab-0123456789ab",
+      scope: "host",
+    },
+    reason: "Ready for Host review",
+  },
 });
 
 const result = defineSpsPluginAuthoringResultV1({
@@ -385,13 +397,22 @@ const result = defineSpsPluginAuthoringResultV1({
   status: "completed",
   output: {
     proposalId: "sps.proposal.001",
-    action: "install",
-    targetPluginId: "com.example.workplane",
+    action: request.input.action,
+    target: request.input.target,
     execution: "proposed",
     requiresHostConfirmation: true,
   },
 });
 ```
+
+The lifecycle input and output use the same exact `target` shape as Core:
+`pluginKey` is required; `pluginId`, `packageName`, `version`, and
+`registryStageId` are optional; and `scope` is required. `install` requires
+`packageName`, `version`, `registryStageId`, and `scope: "host"`. `update`
+requires `version`, `registryStageId`, and `scope: "host"`. Company scope is
+limited to `activate` and `disable`; all other operations are Host-scoped.
+Unknown target keys, local paths, URLs, and credential-like target/evidence
+values are rejected.
 
 ## Authoring loop
 
