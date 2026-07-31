@@ -23,6 +23,15 @@ test("normalizes an immutable, workflow-neutral dependency declaration", () => {
   assert.throws(() => declaration.requiredDependencies.push({ id: "com.example.other" }), TypeError);
 });
 
+test("accepts plugin identifiers allowed by the Core manifest contract", () => {
+  const declaration = defineSpsPluginDependencyManifestV1(plugin("com.example_asset", "1.0.0", {
+    requiredDependencies: [{ id: "com.example_runtime" }],
+  }));
+
+  assert.equal(declaration.id, "com.example_asset");
+  assert.equal(declaration.requiredDependencies[0].id, "com.example_runtime");
+});
+
 test("compares SemVer including prerelease precedence and inclusive version bounds", () => {
   assert.equal(compareSpsPluginVersionsV1("1.0.0-alpha.1", "1.0.0-alpha.beta"), -1);
   assert.equal(compareSpsPluginVersionsV1("1.0.0-1", "1.0.0-alpha"), -1);

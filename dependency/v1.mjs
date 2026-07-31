@@ -5,7 +5,7 @@
  */
 export const SPS_PLUGIN_DEPENDENCY_V1_SCHEMA = "sps-plugin-dependency/v1";
 
-const PLUGIN_ID = /^[a-z0-9][a-z0-9.-]{2,127}$/;
+const PLUGIN_ID = /^[a-z0-9][a-z0-9._-]{2,127}$/;
 const SERVICE_ID = /^[a-z0-9][a-z0-9._:-]{1,127}$/;
 const SEMVER = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*))*))?(?:\+([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$/;
 const DECLARATION_KEYS = new Set(["id", "version", "requiredDependencies", "optionalDependencies", "conflicts", "services"]);
