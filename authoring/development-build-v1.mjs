@@ -143,14 +143,53 @@ function safeUiEntry(packageManifest) {
   if (typeof candidate !== "string" || candidate.length === 0 || candidate.length > 512 || candidate.includes("\0") || path.isAbsolute(candidate)) {
     throw new DevelopmentBuildError("UI_ENTRY_INVALID", "output-fingerprint", "Plugin UI entry declaration is invalid.");
   }
-  const normalized = candidate.replaceAll("\\", "/").replace(/^\.\//, "");
+  const normalized = candidate.replaceAll("\\", "/").replace(/^\.\//, "").replace(/\/+$/, "");
   if (!normalized.startsWith("dist/") || normalized.split("/").some((part) => part === "" || part === "." || part === "..")) {
-    throw new DevelopmentBuildError("UI_ENTRY_INVALID", "output-fingerprint", "Plugin UI entry must be a safe file inside dist.");
+    throw new DevelopmentBuildError("UI_ENTRY_INVALID", "output-fingerprint", "Plugin UI entry must be a safe file or directory inside dist.");
   }
   return normalized;
 }
 
-async function fingerprintOutputFile(root, relative, required) {
+function addOutputFile(counters, stats, limits) {
+  if (stats.size > limits.maxFileBytes) {
+    throw new DevelopmentBuildError("OUTPUT_FILE_LIMIT", "output-fingerprint", "Plugin build output exceeds the per-file size limit.");
+  }
+  counters.files += 1;
+  counters.bytes += stats.size;
+  if (counters.files > limits.maxFiles) {
+    throw new DevelopmentBuildError("OUTPUT_FILE_COUNT_LIMIT", "output-fingerprint", "Plugin build output exceeds the file-count limit.");
+  }
+  if (counters.bytes > limits.maxTotalBytes) {
+    throw new DevelopmentBuildError("OUTPUT_TOTAL_SIZE_LIMIT", "output-fingerprint", "Plugin build output exceeds the total-size limit.");
+  }
+}
+
+async function collectOutputDirectoryFiles(root, directory, files, counters, limits) {
+  const entries = await fs.readdir(directory, { withFileTypes: true });
+  entries.sort((left, right) => compareName(left.name, right.name));
+  for (const entry of entries) {
+    const absolute = path.join(directory, entry.name);
+    const stats = await fs.lstat(absolute);
+    if (stats.isSymbolicLink()) {
+      throw new DevelopmentBuildError("OUTPUT_SYMLINK_REJECTED", "output-fingerprint", "Plugin build output must not contain symbolic links or junctions.");
+    }
+    if (stats.isDirectory()) {
+      await collectOutputDirectoryFiles(root, absolute, files, counters, limits);
+      continue;
+    }
+    if (!stats.isFile()) {
+      throw new DevelopmentBuildError("OUTPUT_INVALID", "output-fingerprint", "Plugin build output contains an unsupported filesystem entry.");
+    }
+    const real = await fs.realpath(absolute);
+    if (!isInside(root, real)) {
+      throw new DevelopmentBuildError("OUTPUT_PATH_ESCAPE", "output-fingerprint", "Plugin build output must not resolve outside the plugin source directory.");
+    }
+    addOutputFile(counters, stats, limits);
+    files.push({ absolute: real, relative: posixRelative(directory, absolute) });
+  }
+}
+
+async function fingerprintOutputEntry(root, relative, required, { allowDirectory = false, limits } = {}) {
   const absolute = path.resolve(root, relative);
   if (!isInside(root, absolute)) {
     throw new DevelopmentBuildError("OUTPUT_PATH_ESCAPE", "output-fingerprint", "Plugin build output must stay inside the plugin source directory.");
@@ -162,27 +201,55 @@ async function fingerprintOutputFile(root, relative, required) {
     if (!required) return null;
     throw new DevelopmentBuildError("OUTPUT_MISSING", "output-fingerprint", "Required plugin build output is missing.");
   }
-  if (!stats.isFile() || stats.isSymbolicLink()) {
-    throw new DevelopmentBuildError("OUTPUT_INVALID", "output-fingerprint", "Plugin build output must be a regular file.");
+  if (stats.isSymbolicLink() || (!stats.isFile() && !(allowDirectory && stats.isDirectory()))) {
+    throw new DevelopmentBuildError("OUTPUT_INVALID", "output-fingerprint", allowDirectory
+      ? "Plugin build output must be a regular file or directory."
+      : "Plugin build output must be a regular file.");
   }
   const real = await fs.realpath(absolute);
   if (!isInside(root, real)) {
     throw new DevelopmentBuildError("OUTPUT_PATH_ESCAPE", "output-fingerprint", "Plugin build output must not resolve outside the plugin source directory.");
   }
-  return sha256(await fs.readFile(real));
+  const normalizedLimits = normalizeLimits(limits);
+  if (stats.isFile()) {
+    addOutputFile({ files: 0, bytes: 0 }, stats, normalizedLimits);
+    return sha256(await fs.readFile(real));
+  }
+
+  const files = [];
+  const counters = { files: 0, bytes: 0 };
+  await collectOutputDirectoryFiles(root, real, files, counters, normalizedLimits);
+  const hash = createHash("sha256");
+  hash.update("sps-development-output-directory-v1\0");
+  for (const file of files) {
+    const bytes = await fs.readFile(file.absolute);
+    hash.update(file.relative, "utf8");
+    hash.update("\0");
+    hash.update(String(bytes.length), "ascii");
+    hash.update("\0");
+    hash.update(bytes);
+    hash.update("\0");
+  }
+  return hash.digest("hex");
 }
 
 /** Collects byte-level fingerprints for the outputs consumed by SPS. */
-export async function fingerprintDevelopmentBuildOutputs({ sourceDirectory } = {}) {
+export async function fingerprintDevelopmentBuildOutputs({ sourceDirectory, limits } = {}) {
   const root = await resolvePluginRoot(sourceDirectory);
   const packageManifest = await readJson(path.join(root, "package.json"));
   const declaredUi = safeUiEntry(packageManifest);
-  const uiSha256 = declaredUi === null
-    ? await fingerprintOutputFile(root, "dist/ui.js", false)
-    : await fingerprintOutputFile(root, declaredUi, true);
+  let uiSha256 = null;
+  if (declaredUi === null) {
+    uiSha256 = await fingerprintOutputEntry(root, "dist/ui.js", false, { limits });
+    if (uiSha256 === null) {
+      uiSha256 = await fingerprintOutputEntry(root, "dist/ui", false, { allowDirectory: true, limits });
+    }
+  } else {
+    uiSha256 = await fingerprintOutputEntry(root, declaredUi, true, { allowDirectory: true, limits });
+  }
   return Object.freeze({
-    manifestSha256: await fingerprintOutputFile(root, "dist/manifest.js", true),
-    workerSha256: await fingerprintOutputFile(root, "dist/worker.js", true),
+    manifestSha256: await fingerprintOutputEntry(root, "dist/manifest.js", true, { limits }),
+    workerSha256: await fingerprintOutputEntry(root, "dist/worker.js", true, { limits }),
     uiSha256,
   });
 }

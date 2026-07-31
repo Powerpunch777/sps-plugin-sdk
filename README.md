@@ -223,10 +223,12 @@ developer's private machine state as source.
 
 `manifestSha256` and `workerSha256` are computed from the actual
 `dist/manifest.js` and `dist/worker.js` bytes. If `package.json.spsPlugin.ui`
-declares a safe `dist/` UI entry, its bytes are reported as `uiSha256`; when no
-UI entry exists, `uiSha256` is `null`. Missing required Worker or manifest
-outputs make the JSON result fail. SPS can therefore stage only a candidate
-whose build, validation, test, source revision, and output revision agree.
+declares a safe file or directory below `dist/`, its sorted paths and bytes are
+reported as one deterministic `uiSha256`; when no UI output exists,
+`uiSha256` is `null`. Output trees are bounded and reject links just like source
+trees. Missing required Worker or manifest outputs make the JSON result fail.
+SPS can therefore stage only a candidate whose build, validation, test, source
+revision, and output revision agree.
 
 Plugin tools can import the same public contract directly:
 

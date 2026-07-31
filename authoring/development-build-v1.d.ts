@@ -42,6 +42,6 @@ export const DEVELOPMENT_BUILD_SCHEMA_VERSION: "development-build/v1";
 export const DEFAULT_DEVELOPMENT_BUILD_LIMITS: Readonly<DevelopmentBuildLimits>;
 
 export function fingerprintDevelopmentSource(options: { sourceDirectory: string; limits?: Partial<DevelopmentBuildLimits> }): Promise<Readonly<{ fingerprint: string; fileCount: number; totalBytes: number }>>;
-export function fingerprintDevelopmentBuildOutputs(options: { sourceDirectory: string }): Promise<Readonly<{ manifestSha256: string; workerSha256: string; uiSha256: string | null }>>;
+export function fingerprintDevelopmentBuildOutputs(options: { sourceDirectory: string; limits?: Partial<DevelopmentBuildLimits> }): Promise<Readonly<{ manifestSha256: string; workerSha256: string; uiSha256: string | null }>>;
 export function developmentBuildDiagnostic(error: unknown, fallback?: Partial<DevelopmentBuildDiagnostic>): DevelopmentBuildDiagnostic;
 export function createDevelopmentBuildResult(input: CreateDevelopmentBuildResultInput): DevelopmentBuildResult;

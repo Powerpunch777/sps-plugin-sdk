@@ -8,6 +8,13 @@
   `test` commands.
 - Reject source-tree symbolic links and bound source file count and bytes
   before a development candidate can be reported.
+- Fingerprint both single-file and directory-based UI builds with bounded,
+  link-safe deterministic traversal.
+
+## 0.4.0 - 2026-07-31
+
+- Add Workspace Shell, Dashboard widget, and Inbox manifest contracts.
+- Add workflow-neutral Worker Inbox publishing and in-memory test evidence.
 
 ## 0.3.0 - 2026-07-31
 

@@ -55,7 +55,28 @@ test("development output fingerprint hashes manifest, worker, and declared UI by
   assert.notEqual(changed.uiSha256, first.uiSha256);
 });
 
-test("a declared UI output must exist as a regular file", async (t) => {
+test("development output fingerprint supports deterministic UI directories", async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "sps-development-ui-directory-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await createBuild(root);
+  await mkdir(path.join(root, "dist", "ui", "assets"), { recursive: true });
+  await Promise.all([
+    writeFile(path.join(root, "dist", "ui", "index.js"), "export {};\n", "utf8"),
+    writeFile(path.join(root, "dist", "ui", "assets", "style.css"), "body {}\n", "utf8"),
+    writeFile(path.join(root, "package.json"), JSON.stringify({ spsPlugin: { ui: "./dist/ui/" } }), "utf8"),
+  ]);
+
+  const first = await fingerprintDevelopmentBuildOutputs({ sourceDirectory: root });
+  const second = await fingerprintDevelopmentBuildOutputs({ sourceDirectory: root });
+  assert.match(first.uiSha256, /^[a-f0-9]{64}$/);
+  assert.equal(second.uiSha256, first.uiSha256);
+
+  await writeFile(path.join(root, "dist", "ui", "assets", "style.css"), "body { color: red; }\n", "utf8");
+  const changed = await fingerprintDevelopmentBuildOutputs({ sourceDirectory: root });
+  assert.notEqual(changed.uiSha256, first.uiSha256);
+});
+
+test("a declared UI output must exist as a regular file or directory", async (t) => {
   const root = await mkdtemp(path.join(os.tmpdir(), "sps-development-ui-output-"));
   t.after(() => rm(root, { recursive: true, force: true }));
   await createBuild(root, { ui: true });
@@ -63,6 +84,27 @@ test("a declared UI output must exist as a regular file", async (t) => {
   await assert.rejects(
     () => fingerprintDevelopmentBuildOutputs({ sourceDirectory: root }),
     (error) => error?.code === "OUTPUT_MISSING",
+  );
+});
+
+test("development output rejects links and enforces output bounds", async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "sps-development-output-bounds-"));
+  const outside = await mkdtemp(path.join(os.tmpdir(), "sps-development-output-outside-"));
+  t.after(() => Promise.all([rm(root, { recursive: true, force: true }), rm(outside, { recursive: true, force: true })]));
+  await createBuild(root);
+  await mkdir(path.join(root, "dist", "ui"), { recursive: true });
+  await writeFile(path.join(root, "package.json"), JSON.stringify({ spsPlugin: { ui: "./dist/ui/" } }), "utf8");
+  await writeFile(path.join(root, "dist", "ui", "large.js"), "abcdef", "utf8");
+  await assert.rejects(
+    () => fingerprintDevelopmentBuildOutputs({ sourceDirectory: root, limits: { maxFileBytes: 5 } }),
+    (error) => error?.code === "OUTPUT_FILE_LIMIT",
+  );
+
+  await writeFile(path.join(outside, "outside.js"), "export {};\n", "utf8");
+  await symlink(path.join(outside, "outside.js"), path.join(root, "dist", "ui", "outside.js"), "file");
+  await assert.rejects(
+    () => fingerprintDevelopmentBuildOutputs({ sourceDirectory: root }),
+    (error) => error?.code === "OUTPUT_SYMLINK_REJECTED",
   );
 });
 
