@@ -1,5 +1,30 @@
 # SPS Plugin SDK
 
+## Plugin Dependency v1
+
+`@sonparkserver/plugin-sdk/dependency/v1` is a strict, workflow-neutral
+dependency planning contract. It declares required plugin dependencies with
+inclusive `minVersion` and `maxVersion` bounds, optional plugin dependencies,
+optional service discovery, and declared conflicts. The analyzer returns a
+fully immutable, deterministic report for missing dependencies, incompatible
+versions, conflicts, required-dependency cycles, and disable/delete impact.
+
+```js
+import { analyzeSpsPluginDependenciesV1 } from "@sonparkserver/plugin-sdk/dependency/v1";
+
+const plan = analyzeSpsPluginDependenciesV1({
+  plugins: [
+    { id: "com.example.app", version: "1.0.0", requiredDependencies: [{ id: "com.example.runtime", minVersion: "1.0.0" }] },
+    { id: "com.example.runtime", version: "1.2.0", services: [{ id: "runtime.commands" }] },
+  ],
+  target: { action: "disable", pluginId: "com.example.runtime" },
+});
+```
+
+This is analysis evidence only. It never installs, downloads, enables,
+disables, deletes, executes, or otherwise changes a plugin. A host product
+must present the report and make any lifecycle decision explicitly.
+
 Looking for SPS Desktop? Start with the
 [SPS product overview](https://github.com/Powerpunch777/SPS).
 
