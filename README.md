@@ -343,27 +343,24 @@ conversation contract used by Plugin Discovery & Builder. It is intentionally
 provider-neutral: an SPS Worker, a local CLI, or a hosted AI can implement an
 operation, while SPS receives only strict request/result records.
 
-The six operations are separated into five namespaces:
+The six read-only and authoring operations are separated into four namespaces:
 
 | Namespace | Operations | Purpose |
 | --- | --- | --- |
-| `catalog` | `searchCatalog` | Find catalog candidates without installing one. |
+| `catalog` | `searchCatalog`, `getCatalogPlugin` | Find candidates and inspect one catalog record without installing it. |
 | `project` | `createPluginProject` | Create or identify an authoring project. |
 | `build` | `runAuthoringStep`, `inspectBuild` | Plan/generate/refine/build/validate/test and inspect typed build evidence. |
 | `preview` | `openPreview` | Request a safe preview handle for one built surface. |
-| `lifecycle` | `createLifecycleProposal` | Prepare a Host-reviewable lifecycle proposal. |
-
-Lifecycle is deliberately non-mutating. Its only accepted execution value is
-`"proposed"`, and every proposal declares `requiresHostConfirmation: true`.
-It cannot install, activate, update, disable, or remove a plugin.
-Those actions remain Core lifecycle operations after explicit Host review.
 
 Authoring state is referenced by a provider-neutral `authoringSessionId`
 (`spsas_...`). Evidence is append-only: each safe request, result, review, or
 diagnostic receives an `evidenceRef` (`spsae_...`) and callers get a new frozen
 ledger when appending. The contract rejects local/external paths, command
 lines, raw tool output, and credential-like text, so the transcript can be
-attached to a proposal without exposing a developer machine.
+attached to a review record without exposing a developer machine. Marketplace
+Assistant uses only catalog search and detail records. It cannot request a
+plugin install, update, activation, disable, or removal through this contract;
+those actions remain explicit Host operations in SPS.
 
 ```js
 import {
@@ -375,44 +372,29 @@ import {
 
 const request = defineSpsPluginAuthoringRequestV1({
   authoringSessionId: "spsas_0123456789abcdef",
-  operation: "createLifecycleProposal",
+  operation: "searchCatalog",
   input: {
-    projectId: "sps.project.demo",
-    buildId: "sps.build.001",
-    action: "install",
-    target: {
-      pluginKey: "com.example.workplane",
-      packageName: "@sps/workplane",
-      version: "1.2.3",
-      registryStageId: "01234567-89ab-4cde-8fab-0123456789ab",
-      scope: "host",
-    },
-    reason: "Ready for Host review",
+    query: "workplane",
+    limit: 10,
+    sources: ["official", "community"],
   },
 });
 
 const result = defineSpsPluginAuthoringResultV1({
   authoringSessionId: request.authoringSessionId,
-  operation: "createLifecycleProposal",
+  operation: "searchCatalog",
   status: "completed",
   output: {
-    proposalId: "sps.proposal.001",
-    action: request.input.action,
-    target: request.input.target,
-    execution: "proposed",
-    requiresHostConfirmation: true,
+    matches: [{
+      pluginId: "com.example.workplane",
+      version: "1.2.3",
+      title: "Workplane",
+      summary: "A workspace collaboration extension.",
+      source: "official",
+    }],
   },
 });
 ```
-
-The lifecycle input and output use the same exact `target` shape as Core:
-`pluginKey` is required; `pluginId`, `packageName`, `version`, and
-`registryStageId` are optional; and `scope` is required. `install` requires
-`packageName`, `version`, `registryStageId`, and `scope: "host"`. `update`
-requires `version`, `registryStageId`, and `scope: "host"`. Company scope is
-limited to `activate` and `disable`; all other operations are Host-scoped.
-Unknown target keys, local paths, URLs, and credential-like target/evidence
-values are rejected.
 
 ## Authoring loop
 

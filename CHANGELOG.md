@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.10.0 - 2026-07-31
+
+- Keep the typed authoring contract read-only for Marketplace Assistant use.
+- Remove the obsolete authoring mutation namespace and its target types and
+  validators from the public authoring contract.
+- Keep plugin Worker technical lifecycle conformance (`initialize`, `health`,
+  and `shutdown`) unchanged.
+- Add a bounded `getCatalogPlugin` detail operation beside catalog search.
+
 ## 0.9.0 - 2026-07-31
 
 - Correct the lifecycle authoring contract to use Core's exact nested `target`
@@ -13,12 +22,11 @@
 ## 0.8.0 - 2026-07-31
 
 - Add the provider-neutral Plugin Discovery & Builder typed authoring contract
-  for catalog search, project creation, authoring steps, build inspection,
-  preview handles, and lifecycle proposals.
-- Separate catalog, project, build, preview, and lifecycle namespaces.
+  for catalog search, project creation, authoring steps, build inspection, and
+  preview handles.
+- Separate catalog, project, build, and preview namespaces.
 - Add append-only `authoringSessionId` evidence ledgers and path/secret-safe
   request and result validation.
-- Make lifecycle proposals explicitly non-mutating and Host-confirmed.
 
 ## 0.5.0 - 2026-07-31
 

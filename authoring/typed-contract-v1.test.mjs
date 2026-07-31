@@ -14,11 +14,11 @@ const evidence = "spsae_0123456789abcdef";
 test("authoring requests classify all v1 operations into separate provider-neutral namespaces", () => {
   const cases = [
     ["searchCatalog", { query: "project workplane", limit: 5 }, "catalog"],
+    ["getCatalogPlugin", { pluginId: "com.example.demo", version: "1.2.3", source: "official" }, "catalog"],
     ["createPluginProject", { templateId: "sps.template.basic", displayName: "My Builder" }, "project"],
     ["runAuthoringStep", { projectId: "sps.project.demo", step: "build" }, "build"],
     ["inspectBuild", { projectId: "sps.project.demo", buildId: "sps.build.001" }, "build"],
     ["openPreview", { projectId: "sps.project.demo", buildId: "sps.build.001", surface: "dashboard" }, "preview"],
-    ["createLifecycleProposal", { projectId: "sps.project.demo", buildId: "sps.build.001", action: "install", target: { pluginKey: "com.example.demo", packageName: "@sps/demo", version: "1.2.3", registryStageId: "0123456789abcdef0123456789abcdef", scope: "host" }, reason: "Ready for Host review" }, "lifecycle"],
   ];
   for (const [operation, input, namespace] of cases) {
     const value = defineSpsPluginAuthoringRequestV1({ authoringSessionId: session, operation, input, evidenceRefs: [evidence] });
@@ -50,71 +50,48 @@ test("authoring result contracts accept only safe, typed output for every v1 ope
   const hash = "a".repeat(64);
   const cases = [
     ["searchCatalog", { matches: [{ pluginId: "com.example.demo", version: "1.2.3", title: "Demo", summary: "A safe summary", source: "official" }] }],
+    ["getCatalogPlugin", { plugin: { pluginId: "com.example.demo", version: "1.2.3", title: "Demo", summary: "A safe summary", source: "official", publisher: "Example Studio", categories: ["workflow"], capabilities: ["agent.tools.register"] } }],
     ["createPluginProject", { projectId: "sps.project.demo", state: "created" }],
     ["runAuthoringStep", { projectId: "sps.project.demo", buildId: "sps.build.001", step: "build", outcome: "completed" }],
     ["inspectBuild", { projectId: "sps.project.demo", buildId: "sps.build.001", status: "valid", manifestSha256: hash, workerSha256: hash }],
     ["openPreview", { projectId: "sps.project.demo", buildId: "sps.build.001", previewId: "sps.preview.001", state: "ready" }],
-    ["createLifecycleProposal", { proposalId: "sps.proposal.001", action: "install", target: { pluginKey: "com.example.demo", packageName: "@sps/demo", version: "1.2.3", registryStageId: "0123456789abcdef0123456789abcdef", scope: "host" }, execution: "proposed", requiresHostConfirmation: true }],
   ];
   for (const [operation, output] of cases) {
     const value = defineSpsPluginAuthoringResultV1({ authoringSessionId: session, operation, status: "completed", output, evidenceRefs: [evidence] });
     assert.equal(value.operation, operation);
-    if (value.namespace === "lifecycle") assert.equal(value.output.execution, "proposed");
-    else assert.equal(value.namespace === "lifecycle", false);
+    assert.notEqual(value.namespace, "lifecycle");
   }
 });
 
-test("lifecycle proposals are non-mutating contracts and explicitly require host confirmation", () => {
-  const proposal = defineSpsPluginAuthoringResultV1({
+test("authoring contract rejects plugin mutation operations", () => {
+  assert.throws(() => defineSpsPluginAuthoringRequestV1({
     authoringSessionId: session,
-    operation: "createLifecycleProposal",
+    operation: "installPlugin",
+    input: {},
+  }), { code: "SPS_PLUGIN_AUTHORING_INVALID" });
+  assert.throws(() => defineSpsPluginAuthoringResultV1({
+    authoringSessionId: session,
+    operation: "activatePlugin",
     status: "completed",
-    output: { proposalId: "sps.proposal.001", action: "update", target: { pluginKey: "com.example.demo", version: "1.2.3", registryStageId: "0123456789abcdef0123456789abcdef", scope: "host" }, execution: "proposed", requiresHostConfirmation: true },
+    output: {},
+  }), { code: "SPS_PLUGIN_AUTHORING_INVALID" });
+});
+
+test("catalog detail is read-only, bounded, and rejects unknown fields", () => {
+  const detail = defineSpsPluginAuthoringResultV1({
+    authoringSessionId: session,
+    operation: "getCatalogPlugin",
+    status: "completed",
+    output: { plugin: { pluginId: "com.example.demo", version: "1.2.3", title: "Demo", summary: "Details", source: "official", publisher: "Example Studio", categories: ["workflow"], capabilities: ["agent.tools.register"] } },
   });
-  assert.deepEqual(proposal.output, { proposalId: "sps.proposal.001", action: "update", target: { pluginKey: "com.example.demo", version: "1.2.3", registryStageId: "0123456789abcdef0123456789abcdef", scope: "host" }, execution: "proposed", requiresHostConfirmation: true });
-  assert.throws(() => defineSpsPluginAuthoringResultV1({ ...proposal, output: { ...proposal.output, execution: "executed" } }), { code: "SPS_PLUGIN_AUTHORING_INVALID" });
-  for (const action of ["disable", "remove"]) {
-    assert.equal(defineSpsPluginAuthoringRequestV1({
-      authoringSessionId: session,
-      operation: "createLifecycleProposal",
-      input: { projectId: "sps.project.demo", buildId: "sps.build.001", action, target: { pluginKey: "com.example.demo", scope: "host" }, reason: "Host review requested" },
-    }).input.action, action);
-  }
-  for (const legacyAction of ["deactivate", "uninstall"]) {
-    assert.throws(() => defineSpsPluginAuthoringRequestV1({
-      authoringSessionId: session,
-      operation: "createLifecycleProposal",
-      input: { projectId: "sps.project.demo", buildId: "sps.build.001", action: legacyAction, target: { pluginKey: "com.example.demo", scope: "host" }, reason: "Host review requested" },
-    }), { code: "SPS_PLUGIN_AUTHORING_INVALID" });
-  }
-});
-
-test("lifecycle targets enforce the Core action and scope matrix", () => {
-  const stage = "0123456789abcdef0123456789abcdef";
-  const base = { projectId: "sps.project.demo", buildId: "sps.build.001", reason: "Host review requested" };
-  const install = defineSpsPluginAuthoringRequestV1({ authoringSessionId: session, operation: "createLifecycleProposal", input: { ...base, action: "install", target: { pluginKey: "com.example.demo", packageName: "@sps/demo", version: "1.2.3", registryStageId: stage, scope: "host" } } });
-  assert.deepEqual(install.input.target, { pluginKey: "com.example.demo", packageName: "@sps/demo", version: "1.2.3", registryStageId: stage, scope: "host" });
-  for (const [action, target] of [
-    ["install", { pluginKey: "com.example.demo", packageName: "@sps/demo", version: "1.2.3", scope: "host" }],
-    ["install", { pluginKey: "com.example.demo", packageName: "@sps/demo", version: "1.2.3", registryStageId: stage, scope: "company" }],
-    ["update", { pluginKey: "com.example.demo", registryStageId: stage, scope: "host" }],
-    ["update", { pluginKey: "com.example.demo", version: "1.2.3", scope: "host" }],
-    ["remove", { pluginKey: "com.example.demo", scope: "company" }],
-  ]) assert.throws(() => defineSpsPluginAuthoringRequestV1({ authoringSessionId: session, operation: "createLifecycleProposal", input: { ...base, action, target } }), { code: "SPS_PLUGIN_AUTHORING_INVALID" });
-  assert.equal(defineSpsPluginAuthoringRequestV1({ authoringSessionId: session, operation: "createLifecycleProposal", input: { ...base, action: "activate", target: { pluginKey: "com.example.demo", scope: "company" } } }).input.target.scope, "company");
-});
-
-test("lifecycle targets and evidence remain path, URL, secret, and unknown-key safe", () => {
-  const base = { projectId: "sps.project.demo", buildId: "sps.build.001", action: "activate", reason: "Host review requested" };
-  const target = { pluginKey: "com.example.demo", scope: "host" };
-  for (const unsafeTarget of [
-    { ...target, pluginKey: "C:\\Users\\young\\plugin" },
-    { ...target, packageName: "https://example.invalid/plugin" },
-    { ...target, packageName: "token=super-secret" },
-  ]) assert.throws(() => defineSpsPluginAuthoringRequestV1({ authoringSessionId: session, operation: "createLifecycleProposal", input: { ...base, target: unsafeTarget } }), { code: "SPS_PLUGIN_AUTHORING_UNSAFE" });
-  assert.throws(() => defineSpsPluginAuthoringRequestV1({ authoringSessionId: session, operation: "createLifecycleProposal", input: { ...base, target: { ...target, unexpected: true } } }), { code: "SPS_PLUGIN_AUTHORING_INVALID" });
-  assert.throws(() => defineSpsPluginAuthoringResultV1({ authoringSessionId: session, operation: "createLifecycleProposal", status: "completed", output: { proposalId: "sps.proposal.001", action: "activate", target, execution: "proposed", requiresHostConfirmation: false } }), { code: "SPS_PLUGIN_AUTHORING_INVALID" });
-  assert.throws(() => defineSpsPluginAuthoringResultV1({ authoringSessionId: session, operation: "createLifecycleProposal", status: "completed", output: { proposalId: "sps.proposal.001", action: "activate", target: { ...target, packageName: "file:///secret" }, execution: "proposed", requiresHostConfirmation: true } }), { code: "SPS_PLUGIN_AUTHORING_UNSAFE" });
+  assert.equal(detail.namespace, "catalog");
+  assert.equal(detail.output.plugin.publisher, "Example Studio");
+  assert.throws(() => defineSpsPluginAuthoringResultV1({
+    authoringSessionId: session,
+    operation: "getCatalogPlugin",
+    status: "completed",
+    output: { plugin: { pluginId: "com.example.demo", version: "1.2.3", title: "Demo", summary: "Details", source: "official", installCommand: "npm install demo" } },
+  }), { code: "SPS_PLUGIN_AUTHORING_INVALID" });
 });
 
 test("append-only authoring evidence preserves earlier records and rejects duplicate references", () => {

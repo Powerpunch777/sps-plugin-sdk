@@ -2,13 +2,13 @@
  * Provider-neutral Plugin Discovery & Builder authoring contract.
  *
  * These values are transport-safe planning and evidence records. They never
- * contain a local path, secret, command line, raw tool output, or a lifecycle
- * mutation. A host, Desktop, or external authoring provider may implement the
+ * contain a local path, secret, command line, or raw tool output. A host,
+ * Desktop, or external authoring provider may implement the
  * operations, but must keep the resulting records within this contract.
  */
 export const SPS_PLUGIN_AUTHORING_V1_SCHEMA = "sps-plugin-authoring/v1";
-export const SPS_PLUGIN_AUTHORING_NAMESPACES = Object.freeze(["catalog", "project", "build", "preview", "lifecycle"]);
-export const SPS_PLUGIN_AUTHORING_OPERATIONS = Object.freeze(["searchCatalog", "createPluginProject", "runAuthoringStep", "inspectBuild", "openPreview", "createLifecycleProposal"]);
+export const SPS_PLUGIN_AUTHORING_NAMESPACES = Object.freeze(["catalog", "project", "build", "preview"]);
+export const SPS_PLUGIN_AUTHORING_OPERATIONS = Object.freeze(["searchCatalog", "getCatalogPlugin", "createPluginProject", "runAuthoringStep", "inspectBuild", "openPreview"]);
 
 const NAMESPACES = new Set(SPS_PLUGIN_AUTHORING_NAMESPACES);
 const OPERATIONS = new Set(SPS_PLUGIN_AUTHORING_OPERATIONS);
@@ -23,9 +23,6 @@ const SHA256 = /^[a-f0-9]{64}$/;
 const ISO = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
 const SECRET_TEXT = /(?:-----BEGIN(?: [A-Z0-9]+)? PRIVATE KEY-----|\bBearer\s+[A-Za-z0-9._~+/=-]{8,}|\b(?:sk|pk|rk|ghp|github_pat|xox[abprs]|AIza)[_-]?[A-Za-z0-9_-]{12,}|\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}|(?:api[_-]?key|access[_-]?token|client[_-]?secret|password|credential|secret|token)\s*[:=])/i;
 const EXTERNAL_LOCATION = /(?:^[/\\]|[A-Za-z]:[\\/]|\\\\|~[\\/]|[A-Za-z][A-Za-z0-9+.-]*:\/\/)/i;
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-const REGISTRY_STAGE_ID = /^[a-f0-9]{32}$/;
-const LIFECYCLE_TARGET_KEYS = new Set(["pluginKey", "pluginId", "packageName", "version", "registryStageId", "scope"]);
 
 export class SpsPluginAuthoringError extends Error {
   constructor(code, message) { super(message); this.name = "SpsPluginAuthoringError"; this.code = code; }
@@ -66,53 +63,31 @@ function evidenceRefs(value, label = "evidenceRefs") {
 }
 function exact(value, expected) { return value === expected; }
 function operationNamespace(operation) {
-  if (operation === "searchCatalog") return "catalog";
+  if (operation === "searchCatalog" || operation === "getCatalogPlugin") return "catalog";
   if (operation === "createPluginProject") return "project";
   if (operation === "runAuthoringStep" || operation === "inspectBuild") return "build";
   if (operation === "openPreview") return "preview";
-  return "lifecycle";
+  throw invalid("operation is unsupported.");
 }
 function normalizeRequestInput(operation, input) {
   switch (operation) {
     case "searchCatalog": { const v = keys(input, "searchCatalog.input", new Set(["query", "limit", "sources"])); return Object.freeze({ query: text(v.query, "searchCatalog.input.query", 240), ...(v.limit === undefined ? {} : { limit: integer(v.limit, "searchCatalog.input.limit", 1, 50) }), ...(v.sources === undefined ? {} : { sources: enumArray(v.sources, "searchCatalog.input.sources", ["official", "community", "local"], 3) }) }); }
+    case "getCatalogPlugin": { const v = keys(input, "getCatalogPlugin.input", new Set(["pluginId", "version", "source"])); return Object.freeze({ pluginId: id(v.pluginId, "getCatalogPlugin.input.pluginId"), ...(v.version === undefined ? {} : { version: semver(v.version, "getCatalogPlugin.input.version") }), ...(v.source === undefined ? {} : { source: choice(v.source, "getCatalogPlugin.input.source", ["official", "community", "local"]) }) }); }
     case "createPluginProject": { const v = keys(input, "createPluginProject.input", new Set(["templateId", "displayName", "requestedCapabilities"])); return Object.freeze({ templateId: id(v.templateId, "createPluginProject.input.templateId"), displayName: text(v.displayName, "createPluginProject.input.displayName", 120), requestedCapabilities: enumArray(v.requestedCapabilities ?? [], "createPluginProject.input.requestedCapabilities", ["agent.tools.register", "events.subscribe", "events.emit", "jobs.schedule", "ui.page.register", "ui.sidebar.register", "ui.settings.register", "ui.workspaceShell.provide", "ui.dashboard.contribute", "inbox.items.publish", "api.routes.register", "http.outbound", "sps.workspaceSources.read", "sps.runtimes.read", "sps.runs.dispatch", "sps.artifacts.read", "sps.artifacts.write", "secrets.read-ref"], 32) }); }
     case "runAuthoringStep": { const v = keys(input, "runAuthoringStep.input", new Set(["projectId", "step"])); return Object.freeze({ projectId: id(v.projectId, "runAuthoringStep.input.projectId"), step: choice(v.step, "runAuthoringStep.input.step", ["plan", "generate", "refine", "build", "validate", "test"]) }); }
     case "inspectBuild": { const v = keys(input, "inspectBuild.input", new Set(["projectId", "buildId"])); return Object.freeze({ projectId: id(v.projectId, "inspectBuild.input.projectId"), buildId: id(v.buildId, "inspectBuild.input.buildId") }); }
     case "openPreview": { const v = keys(input, "openPreview.input", new Set(["projectId", "buildId", "surface"])); return Object.freeze({ projectId: id(v.projectId, "openPreview.input.projectId"), buildId: id(v.buildId, "openPreview.input.buildId"), surface: choice(v.surface, "openPreview.input.surface", ["shell", "dashboard", "inbox", "settings", "standalone"]) }); }
-    case "createLifecycleProposal": {
-      const v = keys(input, "createLifecycleProposal.input", new Set(["projectId", "buildId", "action", "target", "reason"]));
-      const action = choice(v.action, "createLifecycleProposal.input.action", ["install", "activate", "update", "disable", "remove"]);
-      return Object.freeze({
-        projectId: id(v.projectId, "createLifecycleProposal.input.projectId"),
-        buildId: id(v.buildId, "createLifecycleProposal.input.buildId"),
-        action,
-        target: normalizeLifecycleTarget(v.target, action, "createLifecycleProposal.input.target"),
-        reason: text(v.reason, "createLifecycleProposal.input.reason", 512),
-      });
-    }
     default: throw invalid("operation is unsupported.");
   }
 }
 function normalizeOutput(operation, output) {
   switch (operation) {
-    case "searchCatalog": { const v = keys(output, "searchCatalog.output", new Set(["matches"])); return Object.freeze({ matches: array(v.matches, "searchCatalog.output.matches", 50, (item, label) => { const x = keys(item, label, new Set(["pluginId", "version", "title", "summary", "source"])); return Object.freeze({ pluginId: id(x.pluginId, `${label}.pluginId`), version: semver(x.version, `${label}.version`), title: text(x.title, `${label}.title`, 160), summary: text(x.summary, `${label}.summary`, 512), source: choice(x.source, `${label}.source`, ["official", "community", "local"]) }); }) }); }
+    case "searchCatalog": { const v = keys(output, "searchCatalog.output", new Set(["matches"])); return Object.freeze({ matches: array(v.matches, "searchCatalog.output.matches", 50, (item, label) => normalizeCatalogPlugin(item, label)) }); }
+    case "getCatalogPlugin": { const v = keys(output, "getCatalogPlugin.output", new Set(["plugin"])); return Object.freeze({ plugin: normalizeCatalogPlugin(v.plugin, "getCatalogPlugin.output.plugin", true) }); }
     case "createPluginProject": { const v = keys(output, "createPluginProject.output", new Set(["projectId", "state"])); return Object.freeze({ projectId: id(v.projectId, "createPluginProject.output.projectId"), state: choice(v.state, "createPluginProject.output.state", ["created", "existing"]) }); }
     case "runAuthoringStep": { const v = keys(output, "runAuthoringStep.output", new Set(["projectId", "buildId", "step", "outcome"])); return Object.freeze({ projectId: id(v.projectId, "runAuthoringStep.output.projectId"), buildId: id(v.buildId, "runAuthoringStep.output.buildId"), step: choice(v.step, "runAuthoringStep.output.step", ["plan", "generate", "refine", "build", "validate", "test"]), outcome: choice(v.outcome, "runAuthoringStep.output.outcome", ["completed", "needs_input", "failed"]) }); }
     case "inspectBuild": { const v = keys(output, "inspectBuild.output", new Set(["projectId", "buildId", "status", "manifestSha256", "workerSha256", "uiSha256"])); return Object.freeze({ projectId: id(v.projectId, "inspectBuild.output.projectId"), buildId: id(v.buildId, "inspectBuild.output.buildId"), status: choice(v.status, "inspectBuild.output.status", ["valid", "invalid", "incomplete"]), ...(v.manifestSha256 === undefined ? {} : { manifestSha256: hash(v.manifestSha256, "inspectBuild.output.manifestSha256") }), ...(v.workerSha256 === undefined ? {} : { workerSha256: hash(v.workerSha256, "inspectBuild.output.workerSha256") }), ...(v.uiSha256 === undefined ? {} : { uiSha256: hash(v.uiSha256, "inspectBuild.output.uiSha256") }) }); }
     case "openPreview": { const v = keys(output, "openPreview.output", new Set(["projectId", "buildId", "previewId", "state"])); return Object.freeze({ projectId: id(v.projectId, "openPreview.output.projectId"), buildId: id(v.buildId, "openPreview.output.buildId"), previewId: id(v.previewId, "openPreview.output.previewId"), state: choice(v.state, "openPreview.output.state", ["ready", "unavailable", "failed"]) }); }
-    case "createLifecycleProposal": {
-      const v = keys(output, "createLifecycleProposal.output", new Set(["proposalId", "action", "target", "execution", "requiresHostConfirmation"]));
-      const action = choice(v.action, "createLifecycleProposal.output.action", ["install", "activate", "update", "disable", "remove"]);
-      const execution = choice(v.execution, "createLifecycleProposal.output.execution", ["proposed"]);
-      if (v.requiresHostConfirmation !== true) throw invalid("createLifecycleProposal.output.requiresHostConfirmation must be true.");
-      return Object.freeze({
-        proposalId: id(v.proposalId, "createLifecycleProposal.output.proposalId"),
-        action,
-        target: normalizeLifecycleTarget(v.target, action, "createLifecycleProposal.output.target"),
-        execution,
-        requiresHostConfirmation: true,
-      });
-    }
     default: throw invalid("operation is unsupported.");
   }
 }
@@ -121,31 +96,19 @@ function choice(value, label, values) { if (typeof value !== "string" || !values
 function enumArray(value, label, values, maximum) { const normalized = array(value, label, maximum, (item, itemLabel) => choice(item, itemLabel, values)); if (new Set(normalized).size !== normalized.length) throw invalid(`${label} must not contain duplicates.`); return Object.freeze([...normalized].sort()); }
 function semver(value, label) { if (typeof value !== "string" || !/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/.test(value)) throw invalid(`${label} is invalid.`); return value; }
 function hash(value, label) { if (typeof value !== "string" || !SHA256.test(value)) throw invalid(`${label} must be a SHA-256 hex digest.`); return value; }
-function uuid(value, label) { if (typeof value !== "string" || !UUID.test(value)) throw invalid(`${label} must be a UUID.`); return value; }
-function registryStageId(value, label) { if (typeof value !== "string" || !REGISTRY_STAGE_ID.test(value)) throw invalid(`${label} must be a 32-character Registry stage id.`); return value; }
-function pluginKey(value, label) {
-  const normalized = text(value, label, 200);
-  if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/.test(normalized) || normalized.includes("..")) throw invalid(`${label} is invalid.`);
-  return normalized;
-}
-function optionalValue(source, key, normalize, label) {
-  if (source[key] === undefined) return {};
-  return { [key]: source[key] === null ? null : normalize(source[key], label) };
-}
-function normalizeLifecycleTarget(input, action, label) {
-  const v = keys(input, label, LIFECYCLE_TARGET_KEYS);
-  const target = {
-    pluginKey: pluginKey(v.pluginKey, `${label}.pluginKey`),
-    ...optionalValue(v, "pluginId", uuid, `${label}.pluginId`),
-    ...optionalValue(v, "packageName", (value, itemLabel) => text(value, itemLabel, 300), `${label}.packageName`),
-    ...optionalValue(v, "version", semver, `${label}.version`),
-    ...optionalValue(v, "registryStageId", registryStageId, `${label}.registryStageId`),
-    scope: choice(v.scope, `${label}.scope`, ["company", "host"]),
-  };
-  if (target.scope === "company" && !["activate", "disable"].includes(action)) throw invalid(`${label}.scope must be host for ${action} proposals.`);
-  if (action === "install" && (target.scope !== "host" || !target.packageName || !target.version || !target.registryStageId)) throw invalid(`${label} install targets require packageName, version, registryStageId, and host scope.`);
-  if (action === "update" && (target.scope !== "host" || !target.version || !target.registryStageId)) throw invalid(`${label} update targets require version, registryStageId, and host scope.`);
-  return Object.freeze(target);
+function normalizeCatalogPlugin(value, label, detailed = false) {
+  const allowed = new Set(["pluginId", "version", "title", "summary", "source", ...(detailed ? ["publisher", "categories", "capabilities"] : [])]);
+  const v = keys(value, label, allowed);
+  return Object.freeze({
+    pluginId: id(v.pluginId, `${label}.pluginId`),
+    version: semver(v.version, `${label}.version`),
+    title: text(v.title, `${label}.title`, 160),
+    summary: text(v.summary, `${label}.summary`, 512),
+    source: choice(v.source, `${label}.source`, ["official", "community", "local"]),
+    ...(detailed && v.publisher !== undefined ? { publisher: text(v.publisher, `${label}.publisher`, 160) } : {}),
+    ...(detailed && v.categories !== undefined ? { categories: array(v.categories, `${label}.categories`, 20, (item, itemLabel) => text(item, itemLabel, 80)) } : {}),
+    ...(detailed && v.capabilities !== undefined ? { capabilities: array(v.capabilities, `${label}.capabilities`, 64, (item, itemLabel) => id(item, itemLabel)) } : {}),
+  });
 }
 
 /** Strictly normalizes a provider-neutral authoring request. It has no side effects. */
