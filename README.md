@@ -111,6 +111,55 @@ const platform = defineSpsPlatformContract({
 runSpsWorker(defineSpsPlugin({ platform }));
 ```
 
+## Workspace surfaces and Inbox
+
+The public `manifest` entrypoint defines the optional SPS Workspace surface:
+a selectable Workspace Shell, neutral Dashboard widgets, and Inbox action
+declarations. It validates safe in-app routes and requires the matching
+capabilities before a package is built. The Host still decides whether a
+plugin is enabled and which Shell is selected.
+
+```js
+import { defineSpsPluginManifest } from "@sonparkserver/plugin-sdk/manifest";
+
+export default defineSpsPluginManifest({
+  id: "com.example.status",
+  apiVersion: 1,
+  version: "1.0.0",
+  displayName: "Status",
+  capabilities: ["ui.dashboard.contribute", "inbox.items.publish"],
+  entrypoints: { ui: "./dist/ui.js", worker: "./dist/worker.js" },
+  ui: {
+    dashboardWidgets: [{
+      id: "status",
+      displayName: "Status",
+      exportName: "StatusWidget",
+      sizes: ["small", "medium"],
+      defaultSize: "medium",
+      defaultOrder: 0,
+      dataAction: "status.read",
+    }],
+  },
+});
+```
+
+Workers publish compact, workflow-neutral summaries through `ctx.inbox`; the
+plugin retains its full underlying record. The `worker/testing` entrypoint can
+run a public Worker in memory and exposes `inboxItems` as test evidence.
+
+```js
+async function initialize({ inbox }) {
+  await inbox.publish({
+    companyId: "company-1",
+    externalId: "build-42",
+    category: "build",
+    title: "Build complete",
+    summary: "Ready for review",
+    severity: "success",
+  });
+}
+```
+
 The public `ui` entrypoint validates page, sidebar, settings, and detail-tab
 contributions. Plugin UI bundles import hooks from
 `@sonparkserver/plugin-sdk/ui/bridge`; the Host injects their implementation at
@@ -126,7 +175,7 @@ memory strategy. Those meanings remain plugin-owned.
 Node.js 22 or later is required.
 
 Until this package is published to npm, generated projects pin the public
-GitHub release tag (`v0.3.0`). The generated Worker is bundled before packaging,
+GitHub release tag (`v0.4.0`). The generated Worker is bundled before packaging,
 so the installed plugin does not need the SDK or `node_modules` at runtime.
 
 ```powershell

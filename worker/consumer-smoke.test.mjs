@@ -28,19 +28,32 @@ test("packed SDK starts an external Worker and cleanly completes the Host lifecy
     const tarball = path.join(root, packed[0].filename);
     assert.ok(packed[0].files.some((file) => file.path === "worker/index.mjs"));
     assert.ok(packed[0].files.some((file) => file.path === "worker/index.d.ts"));
+    assert.ok(packed[0].files.some((file) => file.path === "worker/testing.mjs"));
+    assert.ok(packed[0].files.some((file) => file.path === "manifest/index.mjs"));
     await fs.writeFile(path.join(root, "package.json"), JSON.stringify({ name: "worker-consumer", private: true, type: "module" }));
     await run("npm", ["install", "--ignore-scripts", "--no-audit", "--no-fund", tarball], root);
     await fs.writeFile(path.join(root, "worker.ts"), [
-      'import { defineSpsPlugin, runSpsWorker, type SpsWorkerLifecycleContext } from "@sonparkserver/plugin-sdk/worker";',
-      'const initialize = async ({ spsTransport }: SpsWorkerLifecycleContext) => { await spsTransport.request("sps.runtimes.list", { companyId: "company-1" }); return { ok: true }; };',
+      'import { defineSpsPlugin, runSpsWorker, type SpsInboxItemInput, type SpsWorkerLifecycleContext } from "@sonparkserver/plugin-sdk/worker";',
+      'import { createSpsWorkerTestHarness, type SpsInboxTestEvidence } from "@sonparkserver/plugin-sdk/worker/testing";',
+      'import { defineSpsPluginManifest, type SpsDashboardWidgetDeclaration } from "@sonparkserver/plugin-sdk/manifest";',
+      'const widget: SpsDashboardWidgetDeclaration = { id: "status", displayName: "Status", exportName: "StatusWidget", sizes: ["small"], defaultSize: "small", defaultOrder: 0, dataAction: "status.read" };',
+      'const item: SpsInboxItemInput = { companyId: "company-1", externalId: "build-1", category: "build", title: "Build", summary: "Queued" };',
+      'const initialize = async ({ spsTransport, inbox }: SpsWorkerLifecycleContext) => { await spsTransport.request("sps.runtimes.list", { companyId: "company-1" }); await inbox.publish(item); return { ok: true }; };',
+      'const manifest = defineSpsPluginManifest({ id: "com.example.consumer", apiVersion: 1, version: "1.0.0", displayName: "Consumer", capabilities: ["ui.dashboard.contribute"], entrypoints: { ui: "./dist/ui.js" }, ui: { dashboardWidgets: [widget] } });',
       'const definition = defineSpsPlugin({ initialize, health: () => ({ status: "ok" }), shutdown: () => ({ stopped: true }) });',
+      'const harness = createSpsWorkerTestHarness(definition);',
+      'const evidence: readonly SpsInboxTestEvidence[] = harness.inboxItems;',
+      'void manifest;',
+      'void evidence;',
       'void runSpsWorker(definition);',
     ].join("\n"));
     await run(process.execPath, [path.join(sdkRoot, "node_modules", "typescript", "bin", "tsc"), "--noEmit", "--strict", "--target", "ES2022", "--module", "NodeNext", "--moduleResolution", "NodeNext", "worker.ts"], root);
     await fs.writeFile(path.join(root, "worker.mjs"), [
       'import { defineSpsPlugin, runSpsWorker } from "@sonparkserver/plugin-sdk/worker";',
+      'import { defineSpsPluginManifest } from "@sonparkserver/plugin-sdk/manifest";',
+      'defineSpsPluginManifest({ id: "com.example.consumer", apiVersion: 1, version: "1.0.0", displayName: "Consumer", capabilities: ["ui.dashboard.contribute"], entrypoints: { ui: "./dist/ui.js" }, ui: { dashboardWidgets: [{ id: "status", displayName: "Status", exportName: "StatusWidget", sizes: ["small"], defaultSize: "small", defaultOrder: 0, dataAction: "status.read" }] } });',
       'runSpsWorker(defineSpsPlugin({',
-      '  async initialize({ spsTransport }) { await spsTransport.request("sps.runtimes.list", { companyId: "company-1" }); return { pluginPrivate: true }; },',
+      '  async initialize({ spsTransport, inbox }) { await spsTransport.request("sps.runtimes.list", { companyId: "company-1" }); await inbox.publish({ companyId: "company-1", externalId: "build-1", category: "build", title: "Build queued", summary: "Waiting" }); return { pluginPrivate: true }; },',
       '  health() { return { status: "ok" }; },',
       '  shutdown() { return { stopped: true }; },',
       '}));',
@@ -67,13 +80,16 @@ test("packed SDK starts an external Worker and cleanly completes the Host lifecy
     assert.deepEqual(messages[0], { jsonrpc: "2.0", id: "sps-1", method: "sps.runtimes.list", params: { companyId: "company-1" } });
     send({ jsonrpc: "2.0", id: "sps-1", result: [] });
     messages = await waitFor(2);
-    assert.deepEqual(messages[1], { jsonrpc: "2.0", id: 1, result: { ok: true, supportedMethods: ["health", "shutdown"] } });
-    send({ jsonrpc: "2.0", id: 2, method: "health" });
+    assert.deepEqual(messages[1], { jsonrpc: "2.0", id: "sps-2", method: "inbox.publish", params: { companyId: "company-1", externalId: "build-1", category: "build", title: "Build queued", summary: "Waiting" } });
+    send({ jsonrpc: "2.0", id: "sps-2", result: { id: "inbox-1", externalId: "build-1" } });
     messages = await waitFor(3);
-    assert.deepEqual(messages[2], { jsonrpc: "2.0", id: 2, result: { status: "ok" } });
-    send({ jsonrpc: "2.0", id: 3, method: "shutdown" });
+    assert.deepEqual(messages[2], { jsonrpc: "2.0", id: 1, result: { ok: true, supportedMethods: ["health", "shutdown"] } });
+    send({ jsonrpc: "2.0", id: 2, method: "health" });
     messages = await waitFor(4);
-    assert.deepEqual(messages[3], { jsonrpc: "2.0", id: 3, result: { stopped: true } });
+    assert.deepEqual(messages[3], { jsonrpc: "2.0", id: 2, result: { status: "ok" } });
+    send({ jsonrpc: "2.0", id: 3, method: "shutdown" });
+    messages = await waitFor(5);
+    assert.deepEqual(messages[4], { jsonrpc: "2.0", id: 3, result: { stopped: true } });
     const [code] = await exited;
     assert.equal(code, 0, stderr);
   } finally {

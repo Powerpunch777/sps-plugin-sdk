@@ -9,6 +9,37 @@ export interface SpsPlatformInvocationContext {
   };
 }
 
+export type SpsInboxSeverity = "info" | "success" | "warning" | "error";
+
+/** A compact, workflow-neutral entry shown by the SPS Inbox. */
+export interface SpsInboxItemInput {
+  companyId: string;
+  externalId: string;
+  targetUserId?: string | null;
+  category: string;
+  severity?: SpsInboxSeverity;
+  title: string;
+  summary: string;
+  navigationTarget?: string | null;
+  actionIds?: readonly string[];
+  opaqueReference?: Record<string, JsonValue>;
+}
+
+export interface SpsInboxItemReceipt {
+  id: string;
+  externalId: string;
+}
+
+/**
+ * Publishes compact summaries to the Host Inbox. The plugin keeps ownership of
+ * the underlying record and supplies a stable externalId for updates.
+ */
+export interface SpsInboxClient {
+  publish(input: SpsInboxItemInput): Promise<SpsInboxItemReceipt>;
+  update(input: SpsInboxItemInput): Promise<SpsInboxItemReceipt>;
+  withdraw(input: { companyId: string; externalId: string }): Promise<void>;
+}
+
 /** Structural shape returned by defineSpsPlatformContract. */
 export interface SpsWorkerPlatformContract {
   readonly contractVersion: "1.0";
@@ -21,6 +52,7 @@ export interface SpsWorkerLifecycleContext {
   readonly params: unknown;
   readonly spsTransport: SpsRuntimeTransport;
   readonly platform: SpsPlatformInvocationContext;
+  readonly inbox: SpsInboxClient;
   readonly signal: AbortSignal;
 }
 
