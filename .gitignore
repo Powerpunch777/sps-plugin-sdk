@@ -1,4 +1,6 @@
 node_modules/
+.npm-cache/
+.test-runtime/
 coverage/
 *.log
 .env

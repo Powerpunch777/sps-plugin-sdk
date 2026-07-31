@@ -217,6 +217,55 @@ node .\cli\sps-plugin.mjs test .\my-plugin
 node .\cli\sps-plugin.mjs pack .\my-plugin --out .\release\my-plugin.spsplugin
 ```
 
+## Diagnostics, Test Kit, and conformance
+
+The public Phase 5 contracts run in a plugin repository without SPS Desktop.
+They model only safe, bounded evidence. They do not expose raw CLI output,
+credentials, local paths, or a live Host connection.
+
+```js
+import { createSpsPluginTestKitV1 } from "@sonparkserver/plugin-sdk/testing/v1";
+
+const kit = createSpsPluginTestKitV1({
+  pluginId: "com.example.plugin",
+  pluginVersion: "1.0.0",
+});
+
+kit.invokeTool({ id: "build-preview", label: "Build preview" });
+kit.useConnector({ id: "registry", label: "Registry" });
+kit.setUiState("dashboard", "loading");
+kit.disconnect();
+// Connector, MCP, Run, and Stream calls now fail deterministically.
+kit.reconnect();
+
+const report = kit.createConformanceReport({
+  checks: [{ id: "unit", status: "passed", summary: "Plugin contract tests passed." }],
+  metadata: { runner: "node-22" },
+});
+```
+
+`@sonparkserver/plugin-sdk/diagnostics/v1` normalizes immutable diagnostic
+events. Each event has a stable ID, origin (`core`, `desktop`, or `plugin`),
+category, level, code, UTC ISO timestamp, and structured safe details. A sink
+returns a frozen snapshot through `events` or `read()`; it never exposes its
+mutable backing list.
+
+`@sonparkserver/plugin-sdk/testing/v1` is deterministic and in-memory. It
+models Workspace, Host, Member, Node, Runtime, Source, capability policy,
+network disconnect/reconnect, plugin lifecycle, migration, rollback, backup,
+restart recovery, Shell/Dashboard/Inbox contribution collisions, and UI
+live/empty/loading/error/permission states. It also includes representative
+Tool, Event, Stream, Connector, MCP, and visibility operations.
+
+`@sonparkserver/plugin-sdk/conformance/v1` turns test evidence into immutable
+release-review metadata. The report is safe to attach to a release proposal:
+metadata, summaries, diagnostics, timestamps, and versions are strictly
+validated and bounded. Run only the Phase 5 suite with:
+
+```powershell
+npm run test:diagnostics
+```
+
 ## Developer Mode build contract
 
 SPS Developer Mode can observe a plugin source folder without running package
