@@ -53,6 +53,7 @@ test("creates a source tree whose static manifest can be packaged without import
   assert.match(runtime, /sps: \{ contractVersion: "2\.0", primitives: \[\] \}/);
   assert.match(workerSource, /@sonparkserver\/plugin-sdk\/worker/);
   assert.match(worker, /runSpsWorker/);
+  assert.match(worker, /inbox\.publish/);
   assert.doesNotMatch(worker, /from\s+["']@(?:sonparkserver|paperclipai)\//);
   const runtimeManifest = (await import(pathToFileURL(path.join(sourceDirectory, "dist", "manifest.js")).href)).default;
   assert.deepEqual(runtimeManifest, {

@@ -5,8 +5,12 @@ import { SPS_RUNTIME_OPERATIONS } from "../runtime/index.mjs";
 const RUNTIME_OPERATION_SET = new Set(SPS_RUNTIME_OPERATIONS);
 const LIFECYCLE_METHODS = new Set(["initialize", "health", "shutdown"]);
 const PLATFORM_METHODS = new Set(["executeTool", "onEvent", "runJob"]);
-const PLATFORM_HOST_OPERATIONS = new Set(["state.get", "state.set", "state.delete", "events.emit", "events.subscribe"]);
+const PLATFORM_HOST_OPERATIONS = new Set([
+  "state.get", "state.set", "state.delete", "events.emit", "events.subscribe",
+  "inbox.publish", "inbox.update", "inbox.withdraw",
+]);
 const JSON_RPC_VERSION = "2.0";
+const SURFACE_ID_RE = /^[a-z0-9][a-z0-9._-]*$/;
 
 function isRecord(value) {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
@@ -161,6 +165,97 @@ export function runSpsWorker(plugin, options = {}) {
     }),
   });
 
+  function inboxString(value, label, maxLength) {
+    if (typeof value !== "string" || value.trim().length === 0 || value.length > maxLength) {
+      throw new TypeError(`${label} must be between 1 and ${maxLength} characters.`);
+    }
+    return value.trim();
+  }
+
+  function assertSafeNavigationTarget(value) {
+    const target = inboxString(value, "SPS Inbox navigationTarget", 500);
+    if (!target.startsWith("/") || target.startsWith("//") || target.includes("..")) {
+      throw new TypeError("SPS Inbox navigationTarget must be a safe absolute SPS route.");
+    }
+    return target;
+  }
+
+  function validateInboxActionId(value) {
+    const id = inboxString(value, "SPS Inbox action id", 100);
+    if (!SURFACE_ID_RE.test(id)) throw new TypeError("SPS Inbox action ids must use lowercase letters, numbers, dots, underscores, or hyphens.");
+    return id;
+  }
+
+  function validateInboxItem(input) {
+    if (!isRecord(input) || typeof input.companyId !== "string" || input.companyId.trim().length === 0 ||
+      (input.targetUserId !== undefined && input.targetUserId !== null && (typeof input.targetUserId !== "string" || input.targetUserId.trim().length === 0)) ||
+      (input.severity !== undefined && !["info", "success", "warning", "error"].includes(input.severity)) ||
+      (input.actionIds !== undefined && !Array.isArray(input.actionIds)) ||
+      (input.opaqueReference !== undefined && (!isRecord(input.opaqueReference) || !isJsonValue(input.opaqueReference)))) {
+      throw new TypeError("SPS Inbox entries require a company, JSON-safe optional fields, and a supported severity.");
+    }
+    if (
+      input.opaqueReference !== undefined
+      && new TextEncoder().encode(JSON.stringify(input.opaqueReference)).byteLength > 32_768
+    ) {
+      throw new TypeError("SPS Inbox opaqueReference must not exceed 32 KiB.");
+    }
+    const externalId = inboxString(input.externalId, "SPS Inbox externalId", 200);
+    const category = inboxString(input.category, "SPS Inbox category", 100);
+    const title = inboxString(input.title, "SPS Inbox title", 200);
+    const summary = inboxString(input.summary, "SPS Inbox summary", 2000);
+    const actionIds = input.actionIds === undefined
+      ? undefined
+      : [...new Set(input.actionIds.map(validateInboxActionId))];
+    const navigationTarget = input.navigationTarget === undefined || input.navigationTarget === null
+      ? input.navigationTarget
+      : assertSafeNavigationTarget(input.navigationTarget);
+    return {
+      companyId: input.companyId.trim(),
+      externalId,
+      ...(input.targetUserId === undefined
+        ? {}
+        : { targetUserId: input.targetUserId === null ? null : input.targetUserId.trim() }),
+      category,
+      ...(input.severity === undefined ? {} : { severity: input.severity }),
+      title,
+      summary,
+      ...(input.navigationTarget === undefined ? {} : { navigationTarget }),
+      ...(actionIds === undefined ? {} : { actionIds }),
+      ...(input.opaqueReference === undefined ? {} : { opaqueReference: input.opaqueReference }),
+    };
+  }
+
+  function validateInboxKey(input) {
+    if (!isRecord(input) || typeof input.companyId !== "string" || input.companyId.trim().length === 0) {
+      throw new TypeError("SPS Inbox keys require non-empty companyId and externalId.");
+    }
+    return {
+      companyId: input.companyId.trim(),
+      externalId: inboxString(input.externalId, "SPS Inbox externalId", 200),
+    };
+  }
+
+  const inbox = Object.freeze({
+    async publish(input) {
+      const result = await callHost("inbox.publish", validateInboxItem(input));
+      if (!isRecord(result) || typeof result.id !== "string" || typeof result.externalId !== "string") {
+        throw new TypeError("SPS Host returned an invalid Inbox publish result.");
+      }
+      return { id: result.id, externalId: result.externalId };
+    },
+    async update(input) {
+      const result = await callHost("inbox.update", validateInboxItem(input));
+      if (!isRecord(result) || typeof result.id !== "string" || typeof result.externalId !== "string") {
+        throw new TypeError("SPS Host returned an invalid Inbox update result.");
+      }
+      return { id: result.id, externalId: result.externalId };
+    },
+    async withdraw(input) {
+      await callHost("inbox.withdraw", validateInboxKey(input));
+    },
+  });
+
   function validateStateKey(key) {
     if (!isRecord(key) || typeof key.scopeKind !== "string" || typeof key.stateKey !== "string" || key.stateKey.length === 0 ||
       (key.scopeId !== undefined && (typeof key.scopeId !== "string" || key.scopeId.length === 0)) ||
@@ -213,7 +308,7 @@ export function runSpsWorker(plugin, options = {}) {
       try {
         // Setup output is plugin-private. The Host always receives the Core
         // InitializeResult shape rather than plugin workflow data.
-        await definition.handlers.initialize?.({ params: message.params, spsTransport, platform, signal: controller.signal });
+        await definition.handlers.initialize?.({ params: message.params, spsTransport, platform, inbox, signal: controller.signal });
         for (const registration of definition.handlers.platform?.events ?? []) {
           await callHost("events.subscribe", { eventPattern: registration.name, filter: registration.filter ?? null });
         }
@@ -254,7 +349,7 @@ export function runSpsWorker(plugin, options = {}) {
     if (method === "shutdown") lifecycleState = "shutting_down";
     const handler = definition.handlers[method];
     try {
-      const result = handler ? await handler({ params: message.params, spsTransport, platform, signal: controller.signal }) : null;
+      const result = handler ? await handler({ params: message.params, spsTransport, platform, inbox, signal: controller.signal }) : null;
       sendResponse(id, result);
       if (method === "shutdown") close(new Error("SPS Host requested shutdown."));
     } catch (cause) {
