@@ -1,7 +1,7 @@
 {
   "name": "@sonparkserver/plugin-sdk",
   "private": false,
-  "version": "0.5.0",
+  "version": "0.6.0",
   "type": "module",
   "description": "Public SDK, CLI, and conformance tools for SPS plugins.",
   "license": "Apache-2.0",
@@ -95,23 +95,57 @@
   },
   "typesVersions": {
     "*": {
-      "runtime": ["runtime/index.d.ts"],
-      "worker": ["worker/index.d.ts"],
-      "worker/testing": ["worker/testing.d.ts"],
-      "manifest": ["manifest/index.d.ts"],
-      "platform": ["platform/index.d.ts"],
-      "ui": ["ui/index.d.ts"],
-      "ui/bridge": ["ui/bridge.d.ts"],
-      "preview/fixtures-v1": ["preview/fixtures-v1.d.ts"],
-      "preview/fixtures-v1.mjs": ["preview/fixtures-v1.d.ts"],
-      "authoring/development-build-v1": ["authoring/development-build-v1.d.ts"],
-      "authoring/development-build-v1.mjs": ["authoring/development-build-v1.d.ts"],
-      "diagnostics/v1": ["diagnostics/v1.d.ts"],
-      "diagnostics/v1.mjs": ["diagnostics/v1.d.ts"],
-      "testing/v1": ["testing/v1.d.ts"],
-      "testing/v1.mjs": ["testing/v1.d.ts"],
-      "conformance/v1": ["conformance/v1.d.ts"],
-      "conformance/v1.mjs": ["conformance/v1.d.ts"]
+      "runtime": [
+        "runtime/index.d.ts"
+      ],
+      "worker": [
+        "worker/index.d.ts"
+      ],
+      "worker/testing": [
+        "worker/testing.d.ts"
+      ],
+      "manifest": [
+        "manifest/index.d.ts"
+      ],
+      "platform": [
+        "platform/index.d.ts"
+      ],
+      "ui": [
+        "ui/index.d.ts"
+      ],
+      "ui/bridge": [
+        "ui/bridge.d.ts"
+      ],
+      "preview/fixtures-v1": [
+        "preview/fixtures-v1.d.ts"
+      ],
+      "preview/fixtures-v1.mjs": [
+        "preview/fixtures-v1.d.ts"
+      ],
+      "authoring/development-build-v1": [
+        "authoring/development-build-v1.d.ts"
+      ],
+      "authoring/development-build-v1.mjs": [
+        "authoring/development-build-v1.d.ts"
+      ],
+      "diagnostics/v1": [
+        "diagnostics/v1.d.ts"
+      ],
+      "diagnostics/v1.mjs": [
+        "diagnostics/v1.d.ts"
+      ],
+      "testing/v1": [
+        "testing/v1.d.ts"
+      ],
+      "testing/v1.mjs": [
+        "testing/v1.d.ts"
+      ],
+      "conformance/v1": [
+        "conformance/v1.d.ts"
+      ],
+      "conformance/v1.mjs": [
+        "conformance/v1.d.ts"
+      ]
     }
   },
   "bin": {
