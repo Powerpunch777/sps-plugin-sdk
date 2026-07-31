@@ -24,6 +24,7 @@ const ISO = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
 const SECRET_TEXT = /(?:-----BEGIN(?: [A-Z0-9]+)? PRIVATE KEY-----|\bBearer\s+[A-Za-z0-9._~+/=-]{8,}|\b(?:sk|pk|rk|ghp|github_pat|xox[abprs]|AIza)[_-]?[A-Za-z0-9_-]{12,}|\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}|(?:api[_-]?key|access[_-]?token|client[_-]?secret|password|credential|secret|token)\s*[:=])/i;
 const EXTERNAL_LOCATION = /(?:^[/\\]|[A-Za-z]:[\\/]|\\\\|~[\\/]|[A-Za-z][A-Za-z0-9+.-]*:\/\/)/i;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const REGISTRY_STAGE_ID = /^[a-f0-9]{32}$/;
 const LIFECYCLE_TARGET_KEYS = new Set(["pluginKey", "pluginId", "packageName", "version", "registryStageId", "scope"]);
 
 export class SpsPluginAuthoringError extends Error {
@@ -121,6 +122,7 @@ function enumArray(value, label, values, maximum) { const normalized = array(val
 function semver(value, label) { if (typeof value !== "string" || !/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/.test(value)) throw invalid(`${label} is invalid.`); return value; }
 function hash(value, label) { if (typeof value !== "string" || !SHA256.test(value)) throw invalid(`${label} must be a SHA-256 hex digest.`); return value; }
 function uuid(value, label) { if (typeof value !== "string" || !UUID.test(value)) throw invalid(`${label} must be a UUID.`); return value; }
+function registryStageId(value, label) { if (typeof value !== "string" || !REGISTRY_STAGE_ID.test(value)) throw invalid(`${label} must be a 32-character Registry stage id.`); return value; }
 function pluginKey(value, label) {
   const normalized = text(value, label, 200);
   if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/.test(normalized) || normalized.includes("..")) throw invalid(`${label} is invalid.`);
@@ -137,7 +139,7 @@ function normalizeLifecycleTarget(input, action, label) {
     ...optionalValue(v, "pluginId", uuid, `${label}.pluginId`),
     ...optionalValue(v, "packageName", (value, itemLabel) => text(value, itemLabel, 300), `${label}.packageName`),
     ...optionalValue(v, "version", semver, `${label}.version`),
-    ...optionalValue(v, "registryStageId", uuid, `${label}.registryStageId`),
+    ...optionalValue(v, "registryStageId", registryStageId, `${label}.registryStageId`),
     scope: choice(v.scope, `${label}.scope`, ["company", "host"]),
   };
   if (target.scope === "company" && !["activate", "disable"].includes(action)) throw invalid(`${label}.scope must be host for ${action} proposals.`);
