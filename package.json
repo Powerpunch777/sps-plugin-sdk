@@ -1,7 +1,7 @@
 {
   "name": "@sonparkserver/plugin-sdk",
   "private": false,
-  "version": "0.7.1",
+  "version": "0.8.0",
   "type": "module",
   "description": "Public SDK, CLI, and conformance tools for SPS plugins.",
   "license": "Apache-2.0",
@@ -89,6 +89,16 @@
       "import": "./conformance/v1.mjs",
       "default": "./conformance/v1.mjs"
     },
+    "./authoring/typed-contract-v1": {
+      "types": "./authoring/typed-contract-v1.d.ts",
+      "import": "./authoring/typed-contract-v1.mjs",
+      "default": "./authoring/typed-contract-v1.mjs"
+    },
+    "./authoring/typed-contract-v1.mjs": {
+      "types": "./authoring/typed-contract-v1.d.ts",
+      "import": "./authoring/typed-contract-v1.mjs",
+      "default": "./authoring/typed-contract-v1.mjs"
+    },
     "./dependency/v1": {
       "types": "./dependency/v1.d.ts",
       "import": "./dependency/v1.mjs",
@@ -138,6 +148,12 @@
       "authoring/development-build-v1.mjs": [
         "authoring/development-build-v1.d.ts"
       ],
+      "authoring/typed-contract-v1": [
+        "authoring/typed-contract-v1.d.ts"
+      ],
+      "authoring/typed-contract-v1.mjs": [
+        "authoring/typed-contract-v1.d.ts"
+      ],
       "diagnostics/v1": [
         "diagnostics/v1.d.ts"
       ],
@@ -168,7 +184,7 @@
     "sps-plugin": "./cli/sps-plugin.mjs"
   },
   "scripts": {
-    "test": "node --test profile/extension-profile-v1.test.mjs profile/extension-profile-v2.test.mjs runtime/index.test.mjs runtime/consumer-smoke.test.mjs worker/index.test.mjs worker/testing.test.mjs worker/consumer-smoke.test.mjs manifest/index.test.mjs platform/index.test.mjs ui/index.test.mjs ui/bridge.test.mjs preview/fixtures-v1.test.mjs diagnostics/v1.test.mjs testing/v1.test.mjs testing/consumer-smoke.test.mjs conformance/v1.test.mjs dependency/v1.test.mjs dependency/consumer-smoke.test.mjs registry/release-record-v1.test.mjs registry/local-registry-v1.test.mjs registry/archive-inspector-v1.test.mjs registry/source-trust-v1.test.mjs registry/package-extractor-v1.test.mjs registry/static-package-manifest-v1.test.mjs authoring/worker-bundle-v1.test.mjs authoring/plugin-package-v1.test.mjs authoring/development-build-v1.test.mjs authoring/development-build-v1.consumer-smoke.test.mjs cli/sps-plugin.test.mjs templates/github-static-registry-publish.test.mjs",
+    "test": "node --test profile/extension-profile-v1.test.mjs profile/extension-profile-v2.test.mjs runtime/index.test.mjs runtime/consumer-smoke.test.mjs worker/index.test.mjs worker/testing.test.mjs worker/consumer-smoke.test.mjs manifest/index.test.mjs platform/index.test.mjs ui/index.test.mjs ui/bridge.test.mjs preview/fixtures-v1.test.mjs diagnostics/v1.test.mjs testing/v1.test.mjs testing/consumer-smoke.test.mjs conformance/v1.test.mjs dependency/v1.test.mjs dependency/consumer-smoke.test.mjs registry/release-record-v1.test.mjs registry/local-registry-v1.test.mjs registry/archive-inspector-v1.test.mjs registry/source-trust-v1.test.mjs registry/package-extractor-v1.test.mjs registry/static-package-manifest-v1.test.mjs authoring/worker-bundle-v1.test.mjs authoring/plugin-package-v1.test.mjs authoring/development-build-v1.test.mjs authoring/development-build-v1.consumer-smoke.test.mjs authoring/typed-contract-v1.test.mjs cli/sps-plugin.test.mjs templates/github-static-registry-publish.test.mjs",
     "test:diagnostics": "node --test diagnostics/v1.test.mjs testing/v1.test.mjs conformance/v1.test.mjs testing/consumer-smoke.test.mjs",
     "check": "npm run test"
   },

@@ -336,6 +336,63 @@ import {
 } from "@sonparkserver/plugin-sdk/authoring/development-build-v1.mjs";
 ```
 
+## Plugin Discovery & Builder typed contract
+
+`@sonparkserver/plugin-sdk/authoring/typed-contract-v1` defines the portable
+conversation contract used by Plugin Discovery & Builder. It is intentionally
+provider-neutral: an SPS Worker, a local CLI, or a hosted AI can implement an
+operation, while SPS receives only strict request/result records.
+
+The six operations are separated into five namespaces:
+
+| Namespace | Operations | Purpose |
+| --- | --- | --- |
+| `catalog` | `searchCatalog` | Find catalog candidates without installing one. |
+| `project` | `createPluginProject` | Create or identify an authoring project. |
+| `build` | `runAuthoringStep`, `inspectBuild` | Plan/generate/refine/build/validate/test and inspect typed build evidence. |
+| `preview` | `openPreview` | Request a safe preview handle for one built surface. |
+| `lifecycle` | `createLifecycleProposal` | Prepare a Host-reviewable lifecycle proposal. |
+
+Lifecycle is deliberately non-mutating. Its only accepted execution value is
+`"proposed"`, and every proposal declares `requiresHostConfirmation: true`.
+It cannot install, activate, update, deactivate, or uninstall a plugin.
+Those actions remain Core lifecycle operations after explicit Host review.
+
+Authoring state is referenced by a provider-neutral `authoringSessionId`
+(`spsas_...`). Evidence is append-only: each safe request, result, review, or
+diagnostic receives an `evidenceRef` (`spsae_...`) and callers get a new frozen
+ledger when appending. The contract rejects local/external paths, command
+lines, raw tool output, and credential-like text, so the transcript can be
+attached to a proposal without exposing a developer machine.
+
+```js
+import {
+  appendSpsPluginAuthoringEvidenceV1,
+  createSpsPluginAuthoringSessionV1,
+  defineSpsPluginAuthoringRequestV1,
+  defineSpsPluginAuthoringResultV1,
+} from "@sonparkserver/plugin-sdk/authoring/typed-contract-v1";
+
+const request = defineSpsPluginAuthoringRequestV1({
+  authoringSessionId: "spsas_0123456789abcdef",
+  operation: "searchCatalog",
+  input: { query: "project workplane", limit: 5 },
+});
+
+const result = defineSpsPluginAuthoringResultV1({
+  authoringSessionId: request.authoringSessionId,
+  operation: "createLifecycleProposal",
+  status: "completed",
+  output: {
+    proposalId: "sps.proposal.001",
+    action: "install",
+    targetPluginId: "com.example.workplane",
+    execution: "proposed",
+    requiresHostConfirmation: true,
+  },
+});
+```
+
 ## Authoring loop
 
 1. Create a plugin in its own folder or Git repository. Do not edit SPS

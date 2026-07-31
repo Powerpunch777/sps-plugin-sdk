@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.8.0 - 2026-07-31
+
+- Add the provider-neutral Plugin Discovery & Builder typed authoring contract
+  for catalog search, project creation, authoring steps, build inspection,
+  preview handles, and lifecycle proposals.
+- Separate catalog, project, build, preview, and lifecycle namespaces.
+- Add append-only `authoringSessionId` evidence ledgers and path/secret-safe
+  request and result validation.
+- Make lifecycle proposals explicitly non-mutating and Host-confirmed.
+
 ## 0.5.0 - 2026-07-31
 
 - Add the public Developer Mode build contract with deterministic source and
