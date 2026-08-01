@@ -118,7 +118,11 @@ function validateTransport(transport) {
 
 function request(transport, operation, input) {
   if (!OPERATION_SET.has(operation)) throw new TypeError(`Unsupported SPS Runtime operation: ${String(operation)}.`);
-  return transport.request(operation, input);
+  const payload = Object.fromEntries(Object.entries(input).filter(([, value]) => value !== undefined));
+  if (!isJsonValue(payload)) {
+    throw new TypeError(`SPS Runtime ${operation} input must contain only JSON-serializable values.`);
+  }
+  return transport.request(operation, payload);
 }
 
 /**

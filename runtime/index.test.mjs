@@ -47,6 +47,40 @@ test("malformed declared fields fail before transport while raw fields are omitt
   assert.equal(transportCalls, 0);
 });
 
+test("optional runtime fields are omitted instead of crossing Worker RPC as undefined", async () => {
+  const calls = [];
+  const client = createSpsRuntimeClient({
+    async request(operation, input) {
+      calls.push({ operation, input });
+      assert.doesNotThrow(() => JSON.stringify(input));
+      return [];
+    },
+  });
+
+  await client.runtimes.list("company-1");
+  await client.executionGrants.list("company-1");
+  await client.executionGrants.upsert({
+    companyId: "company-1",
+    subjectKey: "subject-1",
+    nodeId: "node-1",
+    runnerProfileId: "profile-1",
+  });
+  await client.runs.dispatch({ companyId: "company-1", executionGrantId: "grant-1", args: [] });
+  await client.runs.listEvents("company-1", "run-1");
+  await client.artifacts.publish({ companyId: "company-1", subjectKey: "subject-1", title: "Build" });
+  await client.artifacts.list("company-1");
+
+  assert.deepEqual(calls, [
+    { operation: "sps.runtimes.list", input: { companyId: "company-1" } },
+    { operation: "sps.executionGrants.list", input: { companyId: "company-1" } },
+    { operation: "sps.executionGrants.upsert", input: { companyId: "company-1", subjectKey: "subject-1", nodeId: "node-1", runnerProfileId: "profile-1" } },
+    { operation: "sps.runs.dispatch", input: { companyId: "company-1", executionGrantId: "grant-1", args: [] } },
+    { operation: "sps.runs.listEvents", input: { companyId: "company-1", runId: "run-1" } },
+    { operation: "sps.artifacts.publish", input: { companyId: "company-1", subjectKey: "subject-1", title: "Build" } },
+    { operation: "sps.artifacts.list", input: { companyId: "company-1" } },
+  ]);
+});
+
 test("runtime contract helper mirrors Profile 2.0's finite primitive vocabulary and dependencies", () => {
   assert.deepEqual(defineSpsRuntimeContract({ primitives: ["workspace.sources.metadata", "workspace.sources.route", "runtimes.list", "runtimes.dispatch"] }), {
     contractVersion: "2.0",
