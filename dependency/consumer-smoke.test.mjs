@@ -22,7 +22,7 @@ test("packed SDK exposes the dependency analyzer with self-reference types", { t
     const tarball = path.join(root, packed[0].filename);
     for (const file of ["dependency/v1.mjs", "dependency/v1.d.ts"]) assert.ok(packed[0].files.some((entry) => entry.path === file));
     await fs.writeFile(path.join(root, "package.json"), JSON.stringify({ name: "sps-dependency-consumer", private: true, type: "module" }));
-    const unpacked = path.join(root, "unpacked"); await fs.mkdir(unpacked); await run("tar.exe", ["-xzf", tarball, "-C", unpacked], root);
+    const unpacked = path.join(root, "unpacked"); await fs.mkdir(unpacked); await run("tar", ["-xzf", tarball, "-C", unpacked], root);
     const installed = path.join(root, "node_modules", "@sonparkserver", "plugin-sdk"); await fs.mkdir(path.dirname(installed), { recursive: true }); await fs.cp(path.join(unpacked, "package"), installed, { recursive: true });
     await fs.writeFile(path.join(root, "smoke.ts"), [
       'import { analyzeSpsPluginDependenciesV1, type SpsPluginDependencyAnalysisV1 } from "@sonparkserver/plugin-sdk/dependency/v1";',

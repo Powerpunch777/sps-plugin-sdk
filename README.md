@@ -223,7 +223,7 @@ live Host data.
 Node.js 22 or later is required.
 
 Until this package is published to npm, generated projects pin the public
-GitHub release tag (`v0.5.0`). The generated Worker is bundled before packaging,
+GitHub release tag (`v0.11.0`). The generated Worker is bundled before packaging,
 so the installed plugin does not need the SDK or `node_modules` at runtime.
 
 ```powershell

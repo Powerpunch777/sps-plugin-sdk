@@ -28,7 +28,7 @@ test("packed SDK exposes Diagnostics, Test Kit, and Conformance with self-refere
     await fs.writeFile(path.join(root, "package.json"), JSON.stringify({ name: "sps-test-kit-consumer", private: true, type: "module" }));
     const unpacked = path.join(root, "unpacked");
     await fs.mkdir(unpacked);
-    await run("tar.exe", ["-xzf", tarball, "-C", unpacked], root);
+    await run("tar", ["-xzf", tarball, "-C", unpacked], root);
     const installed = path.join(root, "node_modules", "@sonparkserver", "plugin-sdk");
     await fs.mkdir(path.dirname(installed), { recursive: true });
     await fs.cp(path.join(unpacked, "package"), installed, { recursive: true });
