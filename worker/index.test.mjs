@@ -4,6 +4,45 @@ import test from "node:test";
 import { defineSpsPlugin, runSpsWorker } from "./index.mjs";
 import { defineSpsPlatformContract } from "../platform/index.mjs";
 
+test("UI actions use immutable Host scope and reject missing actor metadata", async () => {
+  const { input, lines, worker } = createHarness(defineSpsPlugin({ platform: defineSpsPlatformContract({
+    actions: [{ key: "scope", handler: (_params, context) => ({ companyId: context.companyId, actor: context.actor.type, frozen: Object.isFrozen(context.actor) }) }],
+  }) }));
+  input.write(JSON.stringify({ jsonrpc:"2.0", id:1, method:"initialize", params:{} })+"\n");
+  await eventually(()=>lines.length===1);
+  assert.ok(lines[0].result.supportedMethods.includes("performAction"));
+  input.write(JSON.stringify({jsonrpc:"2.0",id:2,method:"performAction",params:{key:"scope",params:{companyId:"spoof"},actorContext:{type:"user",companyId:"a",userId:"user"}}})+"\n");
+  await eventually(()=>lines.length===2);
+  assert.deepEqual(lines[1].result,{companyId:"a",actor:"user",frozen:true});
+  input.write(JSON.stringify({jsonrpc:"2.0",id:3,method:"performAction",params:{key:"scope",companyId:"a",params:{}}})+"\n");
+  await eventually(()=>lines.length===3); assert.ok(lines[2].error);
+  input.end(); await worker.closed;
+});
+
+test("Agent session callbacks receive terminal events and are released once", async () => {
+  const events=[];
+  const {input,lines,worker}=createHarness(defineSpsPlugin({platform:defineSpsPlatformContract({
+    capabilities:["agent.sessions.send"],
+    actions:[{key:"send",handler:(_params,context)=>context.agents.sessions.sendMessage("s","a",{prompt:"hello",onEvent:event=>events.push(event.eventType)})}],
+  })}));
+  input.write(JSON.stringify({jsonrpc:"2.0",id:1,method:"initialize",params:{}})+"\n");await eventually(()=>lines.length===1);
+  input.write(JSON.stringify({jsonrpc:"2.0",id:2,method:"performAction",params:{key:"send",companyId:"a",params:{},actorContext:{type:"user",companyId:"a",userId:"u"}}})+"\n");
+  await eventually(()=>lines.length===2);assert.equal(lines[1].method,"agents.sessions.sendMessage");
+  input.write(JSON.stringify({jsonrpc:"2.0",id:lines[1].id,result:{runId:"r"}})+"\n");await eventually(()=>lines.length===3);
+  for(const eventType of ["chunk","done","done"])input.write(JSON.stringify({jsonrpc:"2.0",method:"agents.sessions.event",params:{sessionId:"s",eventType,message:"ok"}})+"\n");
+  await eventually(()=>events.length===2);assert.deepEqual(events,["chunk","done"]);
+  input.end();await worker.closed;
+});
+
+test("Agent access without a declared capability never calls the Host", async()=>{
+  const {input,lines,worker}=createHarness(defineSpsPlugin({platform:defineSpsPlatformContract({actions:[{key:"agents",handler:(_params,context)=>context.agents.list({companyId:"a"})}]})}));
+  input.write(JSON.stringify({jsonrpc:"2.0",id:1,method:"initialize",params:{}})+"\n");await eventually(()=>lines.length===1);
+  input.write(JSON.stringify({jsonrpc:"2.0",id:2,method:"performAction",params:{key:"agents",companyId:"a",params:{},actorContext:{type:"user",companyId:"a"}}})+"\n");
+  await eventually(()=>lines.length===2);assert.match(lines[1].error.message,/Undeclared/);
+  assert.equal(lines.some(line=>line.method==="agents.list"),false);
+  input.end();await worker.closed;
+});
+
 function createHarness(plugin) {
   const input = new PassThrough();
   const output = new PassThrough();

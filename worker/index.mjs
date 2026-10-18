@@ -4,10 +4,11 @@ import { SPS_RUNTIME_OPERATIONS } from "../runtime/index.mjs";
 
 const RUNTIME_OPERATION_SET = new Set(SPS_RUNTIME_OPERATIONS);
 const LIFECYCLE_METHODS = new Set(["initialize", "health", "shutdown"]);
-const PLATFORM_METHODS = new Set(["executeTool", "onEvent", "runJob", "getData"]);
+const PLATFORM_METHODS = new Set(["executeTool", "onEvent", "runJob", "getData", "performAction"]);
 const PLATFORM_HOST_OPERATIONS = new Set([
   "state.get", "state.set", "state.delete", "events.emit", "events.subscribe",
   "inbox.publish", "inbox.update", "inbox.withdraw",
+  "agents.list", "agents.sessions.create", "agents.sessions.list", "agents.sessions.sendMessage",
 ]);
 const JSON_RPC_VERSION = "2.0";
 const SURFACE_ID_RE = /^[a-z0-9][a-z0-9._-]*$/;
@@ -94,6 +95,7 @@ export function runSpsWorker(plugin, options = {}) {
   let closed = false;
   let lifecycleState = "new";
   const pending = new Map();
+  const sessionCallbacks = new Map();
   const invocationStorage = new AsyncLocalStorage();
   const controller = new AbortController();
   let resolveClosed;
@@ -111,6 +113,7 @@ export function runSpsWorker(plugin, options = {}) {
     controller.abort(reason);
     for (const { reject } of pending.values()) reject(reason);
     pending.clear();
+    sessionCallbacks.clear();
     reader.close();
     input.pause?.();
     resolveClosed();
@@ -146,7 +149,26 @@ export function runSpsWorker(plugin, options = {}) {
     },
   });
 
+  function agentRequest(capability, operation, params) {
+    if (!definition.handlers.platform?.capabilities.includes(capability)) {
+      return Promise.reject(new Error(`Undeclared SPS Platform capability: ${capability}.`));
+    }
+    return callHost(operation, params);
+  }
   const platform = Object.freeze({
+    agents: Object.freeze({
+      list(input) { return agentRequest("agents.read", "agents.list", input); },
+      sessions: Object.freeze({
+        create(agentId, companyId, options = {}) { return agentRequest("agent.sessions.create", "agents.sessions.create", { ...options, agentId, companyId }); },
+        list(agentId, companyId) { return agentRequest("agent.sessions.list", "agents.sessions.list", { agentId, companyId }); },
+        async sendMessage(sessionId, companyId, options) {
+          if (options.onEvent) sessionCallbacks.set(sessionId, options.onEvent);
+          try {
+            return await agentRequest("agent.sessions.send", "agents.sessions.sendMessage", { sessionId, companyId, prompt: options.prompt, ...(options.reason ? { reason: options.reason } : {}) });
+          } catch (error) { sessionCallbacks.delete(sessionId); throw error; }
+        },
+      }),
+    }),
     events: Object.freeze({
       emit(name, companyId, payload) {
         if (typeof name !== "string" || name.length === 0 || typeof companyId !== "string" || companyId.length === 0 || !isJsonValue(payload)) {
@@ -274,6 +296,15 @@ export function runSpsWorker(plugin, options = {}) {
   }
 
   async function dispatchPlatformMethod(method, params) {
+    if (method === "performAction") {
+      if (!isRecord(params) || typeof params.key !== "string" || !isRecord(params.params ?? {}) || !isJsonValue(params.params ?? {})
+        || !isRecord(params.actorContext) || typeof params.actorContext.companyId !== "string"
+        || !["user", "agent", "system"].includes(params.actorContext.type)
+        || (params.companyId !== undefined && params.actorContext.companyId !== params.companyId)) throw new TypeError("Invalid authenticated performAction context.");
+      const registration = definition.handlers.platform?.actions?.find(action => action.key === params.key);
+      if (!registration) throw Object.assign(new Error(`Unknown SPS Platform action: ${params.key}.`), { code: -32601 });
+      return registration.handler(params.params ?? {}, { ...platform, companyId: params.actorContext.companyId, actor: Object.freeze({ ...params.actorContext }) });
+    }
     if (method === "getData") {
       if (!isRecord(params) || typeof params.key !== "string" || !isRecord(params.params ?? {}) || !isJsonValue(params.params ?? {}) ||
         (params.companyId !== undefined && typeof params.companyId !== "string") ||
@@ -331,6 +362,7 @@ export function runSpsWorker(plugin, options = {}) {
         if (definition.handlers.platform) {
           supportedMethods.push("executeTool", "onEvent", "runJob");
           if (definition.handlers.platform.data.length > 0) supportedMethods.push("getData");
+          if (definition.handlers.platform.actions?.length > 0) supportedMethods.push("performAction");
         }
         sendResponse(id, { ok: true, supportedMethods });
       } catch (cause) {
@@ -377,6 +409,14 @@ export function runSpsWorker(plugin, options = {}) {
   }
 
   async function handleHostNotification(message) {
+    if (message.method === "agents.sessions.event") {
+      const event = message.params;
+      if (lifecycleState !== "ready" || !isRecord(event) || typeof event.sessionId !== "string" || !isJsonValue(event)) return;
+      const callback = sessionCallbacks.get(event.sessionId);
+      if (["done", "error"].includes(event.eventType)) sessionCallbacks.delete(event.sessionId);
+      try { await callback?.(event); } catch (cause) { logger(`SPS session callback failed: ${toError(cause).message}`); }
+      return;
+    }
     if (message.method !== "onEvent") {
       logger(`SPS Worker ignored unsupported Host notification: ${String(message.method)}.`);
       return;
