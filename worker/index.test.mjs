@@ -97,6 +97,82 @@ test("Agent session run methods enforce their dedicated capabilities and invocat
   }
 });
 
+test("execution history RPCs are finite, forwarded with exact payloads, and invocation-company scoped", async () => {
+  let transport;
+  const page = { items: [], nextCursor: null };
+  const { input, lines, worker } = createHarness(defineSpsPlugin({
+    initialize({ spsTransport }) { transport = spsTransport; },
+    platform: defineSpsPlatformContract({ actions: [{ key: "history", handler: async () => ({
+      page: await transport.request("sps.executions.list", {
+        companyId: "company-1",
+        lane: "agent_session",
+        limit: 10,
+        before: { createdAt: "2026-10-22T12:34:56.789Z", runId: "11111111-1111-4111-8111-111111111111", lane: "node" },
+      }),
+      execution: await transport.request("sps.executions.get", {
+        companyId: "company-1", lane: "node", runId: "22222222-2222-4222-8222-222222222222",
+      }),
+    }) }] }),
+  }));
+  input.write(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: {} }) + "\n");
+  await eventually(() => lines.length === 1);
+  input.write(JSON.stringify({
+    jsonrpc: "2.0", id: 2, method: "performAction",
+    paperclipInvocation: { id: "inv-history", scope: { companyId: "company-1" } },
+    params: { key: "history", companyId: "company-1", params: {}, actorContext: { type: "user", companyId: "company-1" } },
+  }) + "\n");
+  await eventually(() => lines.length === 2);
+  assert.deepEqual(lines[1], {
+    jsonrpc: "2.0", id: "sps-1", method: "sps.executions.list",
+    params: {
+      companyId: "company-1", lane: "agent_session", limit: 10,
+      before: { createdAt: "2026-10-22T12:34:56.789Z", runId: "11111111-1111-4111-8111-111111111111", lane: "node" },
+    },
+    paperclipInvocationId: "inv-history",
+  });
+  input.write(JSON.stringify({ jsonrpc: "2.0", id: "sps-1", result: page }) + "\n");
+  await eventually(() => lines.length === 3);
+  assert.deepEqual(lines[2], {
+    jsonrpc: "2.0", id: "sps-2", method: "sps.executions.get",
+    params: { companyId: "company-1", lane: "node", runId: "22222222-2222-4222-8222-222222222222" },
+    paperclipInvocationId: "inv-history",
+  });
+  input.write(JSON.stringify({ jsonrpc: "2.0", id: "sps-2", result: null }) + "\n");
+  await eventually(() => lines.length === 4);
+  assert.deepEqual(lines[3].result, { page, execution: null });
+  input.end();
+  await worker.closed;
+});
+
+test("execution history rejects missing, malformed, and cross-company invocation scope before Host RPC", async () => {
+  const cases = [
+    { scope: {}, companyId: "company-1" },
+    { scope: { companyId: 7 }, companyId: "company-1" },
+    { scope: { companyId: "company-1" }, companyId: "company-2" },
+  ];
+  for (const [index, scenario] of cases.entries()) {
+    let transport;
+    const { input, lines, worker } = createHarness(defineSpsPlugin({
+      initialize({ spsTransport }) { transport = spsTransport; },
+      platform: defineSpsPlatformContract({ actions: [{ key: "history", handler: () => transport.request("sps.executions.get", {
+        companyId: scenario.companyId, lane: "node", runId: "22222222-2222-4222-8222-222222222222",
+      }) }] }),
+    }));
+    input.write(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: {} }) + "\n");
+    await eventually(() => lines.length === 1);
+    input.write(JSON.stringify({
+      jsonrpc: "2.0", id: 2, method: "performAction",
+      paperclipInvocation: { id: `inv-history-${index}`, scope: scenario.scope },
+      params: { key: "history", companyId: "company-1", params: {}, actorContext: { type: "user", companyId: "company-1" } },
+    }) + "\n");
+    await eventually(() => lines.length === 2);
+    assert.match(lines[1].error.message, /authenticated invocation company/);
+    assert.equal(lines.some((line) => line.method === "sps.executions.get"), false);
+    input.end();
+    await worker.closed;
+  }
+});
+
 test("Agent cancellation acknowledgement does not terminate or clear the session callback", async () => {
   const events = [];
   const { input, lines, worker } = createHarness(defineSpsPlugin({ platform: defineSpsPlatformContract({

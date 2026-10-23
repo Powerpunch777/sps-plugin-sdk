@@ -38,14 +38,22 @@ test("an external temporary project imports the packed public runtime facade", {
     await fs.writeFile(path.join(root, "package.json"), JSON.stringify({ name: "sps-sdk-consumer-smoke", private: true, type: "module" }));
     await run("npm", ["install", "--ignore-scripts", "--no-audit", "--no-fund", tarball], root);
     await fs.writeFile(path.join(root, "smoke.ts"), [
-      'import { createSpsRuntimeClient, defineSpsRuntimeContract, type PluginSpsRun, type PluginSpsRuntime, type SpsRuntimeTransport } from "@sonparkserver/plugin-sdk/runtime";',
+      'import { createSpsRuntimeClient, defineSpsRuntimeContract, type PluginSpsRun, type PluginSpsRuntime, type SpsExecution, type SpsExecutionPage, type SpsRuntimeTransport } from "@sonparkserver/plugin-sdk/runtime";',
+      'import type { SpsAgentSessionRunResult } from "@sonparkserver/plugin-sdk/platform";',
       'const transport: SpsRuntimeTransport = { request: async () => [] };',
       'const runtime = createSpsRuntimeClient(transport);',
+      'const history: Promise<SpsExecutionPage> = runtime.executions.list("external-company", { lane: "agent_session", limit: 25, before: { createdAt: "2026-10-22T12:34:56.789Z", runId: "11111111-1111-4111-8111-111111111111", lane: "node" } });',
+      'const execution: Promise<SpsExecution | null> = runtime.executions.get("external-company", "node", "22222222-2222-4222-8222-222222222222");',
+      'declare const observed: SpsExecution;',
+      'const sessionRun: SpsAgentSessionRunResult = { runId: "run", status: "running", cancellationRequested: false, termination: "not_applicable", errorCode: null, error: null, execution: observed };',
       'const runtimes: Promise<PluginSpsRuntime[]> = runtime.runtimes.list("external-company", { nodeId: null });',
       'const runs: Promise<PluginSpsRun[]> = runtime.runs.list("external-company", { subjectKey: null, status: "running", limit: 10, beforeId: null });',
       'const cancelled: Promise<PluginSpsRun> = runtime.runs.cancel("external-company", "run-1");',
       'const contract = defineSpsRuntimeContract({ primitives: ["runtimes.list", "runtimes.dispatch", "runs.observe", "runs.cancel"] });',
       'void runtimes;',
+      'void history;',
+      'void execution;',
+      'void sessionRun;',
       'void runs;',
       'void cancelled;',
       'void contract;',

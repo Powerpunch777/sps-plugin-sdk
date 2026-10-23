@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { inspectSpsExtensionProfileV2, SPS_CORE_PRIMITIVES } from "./extension-profile-v2.mjs";
+import { inspectSpsExtensionProfileV2, SPS_CORE_PRIMITIVES, SPS_EXECUTIONS_OBSERVE_REQUIRED_CAPABILITY } from "./extension-profile-v2.mjs";
 
 test("accepts a workplane without Paperclip task or session assumptions", () => {
   const result = inspectSpsExtensionProfileV2({
@@ -16,6 +16,7 @@ test("accepts a workplane without Paperclip task or session assumptions", () => 
         "workspace.sources.route",
         "runtimes.list",
         "runtimes.dispatch",
+        "executions.observe",
         "runs.observe",
         "runs.cancel",
       ],
@@ -23,12 +24,13 @@ test("accepts a workplane without Paperclip task or session assumptions", () => 
   });
 
   assert.equal(result.valid, true, result.errors.join("\n"));
-  assert.deepEqual(result.features, ["workspace_source", "runtime", "run_observability"]);
+  assert.deepEqual(result.features, ["workspace_source", "runtime", "execution_observability", "run_observability"]);
   assert.deepEqual(result.corePrimitives, [
     "workspace.sources.metadata",
     "workspace.sources.route",
     "runtimes.list",
     "runtimes.dispatch",
+    "executions.observe",
     "runs.observe",
     "runs.cancel",
   ]);
@@ -68,9 +70,11 @@ test("exports the public, finite primitive vocabulary", () => {
     "workspace.sources.route",
     "runtimes.list",
     "runtimes.dispatch",
+    "executions.observe",
     "runs.observe",
     "runs.cancel",
     "artifacts.write",
     "secrets.use",
   ]);
+  assert.equal(SPS_EXECUTIONS_OBSERVE_REQUIRED_CAPABILITY, "sps.executions.read");
 });

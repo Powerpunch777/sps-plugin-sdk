@@ -1,3 +1,5 @@
+import type { SpsExecution } from "@sonparkserver/plugin-sdk/runtime";
+
 export const SPS_PLATFORM_CONTRACT_VERSION: "1.0";
 export const SPS_PLATFORM_CAPABILITIES: readonly [
   "agent.tools.register", "events.subscribe", "events.emit", "jobs.schedule", "plugin.state.read", "plugin.state.write",
@@ -25,6 +27,7 @@ export interface SpsAgentSessionRunResult {
   termination: "not_applicable" | "pending" | "confirmed";
   errorCode: string | null;
   error: string | null;
+  execution?: SpsExecution;
 }
 /** The narrow Worker-to-Host API available while a declared handler runs. */
 export interface SpsPlatformInvocationContext {

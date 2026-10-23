@@ -25,6 +25,8 @@ The invocation context also exposes the existing Core Agent session ABI:
   status, done, and error events; terminal events release the callback.
 - `agents.sessions.getRun(sessionId, companyId, runId)` requires
   `agent.sessions.read` and returns the bounded run status and error fields.
+  Its optional `execution` field carries the safe shared execution-history DTO
+  when the Host has explicit evidence; it may be absent on older Hosts.
 - `agents.sessions.cancel(sessionId, companyId, runId)` requires
   `agent.sessions.cancel` and returns Core's cancellation/termination state.
   This RPC response does not end the `sendMessage` event stream or release its

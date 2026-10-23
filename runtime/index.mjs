@@ -9,6 +9,8 @@ import { SPS_CORE_PRIMITIVES } from "../profile/extension-profile-v2.mjs";
 export const SPS_RUNTIME_CONTRACT_VERSION = "1.0";
 
 export const SPS_RUNTIME_OPERATIONS = Object.freeze([
+  "sps.executions.list",
+  "sps.executions.get",
   "sps.workspaceSources.list",
   "sps.runtimes.list",
   "sps.executionGrants.list",
@@ -25,6 +27,9 @@ export const SPS_RUNTIME_OPERATIONS = Object.freeze([
 
 const OPERATION_SET = new Set(SPS_RUNTIME_OPERATIONS);
 const PRIMITIVE_SET = new Set(SPS_CORE_PRIMITIVES);
+const EXECUTION_LANES = new Set(["node", "agent_session"]);
+const UUID_PATTERN = /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i;
+const CANONICAL_UTC_MILLIS_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
 
 function isRecord(value) {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
@@ -44,6 +49,43 @@ function assertNonEmptyString(value, label) {
   const text = assertString(value, label);
   if (text.trim().length === 0) throw new TypeError(`${label} must be a non-empty string.`);
   return text;
+}
+
+function assertExecutionLane(value, label = "lane") {
+  if (!EXECUTION_LANES.has(value)) throw new TypeError(`${label} must be "node" or "agent_session".`);
+  return value;
+}
+
+function assertUuid(value, label) {
+  const text = assertString(value, label);
+  if (!UUID_PATTERN.test(text)) throw new TypeError(`${label} must be a UUID.`);
+  return text;
+}
+
+function assertCanonicalUtcMillis(value, label) {
+  const text = assertString(value, label);
+  if (!CANONICAL_UTC_MILLIS_PATTERN.test(text)) {
+    throw new TypeError(`${label} must be a canonical ISO timestamp with milliseconds in UTC.`);
+  }
+  try {
+    if (new Date(text).toISOString() !== text) throw new Error("not canonical");
+  } catch {
+    throw new TypeError(`${label} must be a canonical ISO timestamp with milliseconds in UTC.`);
+  }
+  return text;
+}
+
+function assertExecutionCursor(value) {
+  const cursor = assertRecord(value, "before");
+  const allowedKeys = new Set(["createdAt", "runId", "lane"]);
+  if (Object.keys(cursor).some((key) => !allowedKeys.has(key))) {
+    throw new TypeError("before must contain only createdAt, runId, and lane.");
+  }
+  return {
+    createdAt: assertCanonicalUtcMillis(cursor.createdAt, "before.createdAt"),
+    runId: assertUuid(cursor.runId, "before.runId"),
+    lane: assertExecutionLane(cursor.lane, "before.lane"),
+  };
 }
 
 function nullableString(value, label) {
@@ -99,6 +141,14 @@ function nullableInteger(value, label, minimum) {
   return value;
 }
 
+function optionalBoundedInteger(value, label, minimum, maximum) {
+  if (value === undefined) return undefined;
+  if (!Number.isSafeInteger(value) || value < minimum || value > maximum) {
+    throw new TypeError(`${label} must be an integer from ${minimum} through ${maximum} when provided.`);
+  }
+  return value;
+}
+
 function assertHttpsReference(value) {
   if (value === undefined || value === null) return value;
   const text = assertString(value, "referenceUrl");
@@ -139,6 +189,25 @@ export function createSpsRuntimeClient(transport) {
 
   return Object.freeze({
     contractVersion: SPS_RUNTIME_CONTRACT_VERSION,
+    executions: Object.freeze({
+      list(companyId, options = {}) {
+        const input = assertRecord(options, "options");
+        const limit = optionalBoundedInteger(input.limit, "limit", 1, 100);
+        return request(clientTransport, "sps.executions.list", {
+          companyId: assertNonEmptyString(companyId, "companyId"),
+          lane: input.lane === undefined ? undefined : assertExecutionLane(input.lane),
+          limit,
+          before: input.before === undefined ? undefined : assertExecutionCursor(input.before),
+        });
+      },
+      get(companyId, lane, runId) {
+        return request(clientTransport, "sps.executions.get", {
+          companyId: assertNonEmptyString(companyId, "companyId"),
+          lane: assertExecutionLane(lane),
+          runId: assertUuid(runId, "runId"),
+        });
+      },
+    }),
     workspaceSources: Object.freeze({
       list(companyId) {
         return request(clientTransport, "sps.workspaceSources.list", { companyId: assertNonEmptyString(companyId, "companyId") });

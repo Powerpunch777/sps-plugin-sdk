@@ -10,11 +10,14 @@ export const SPS_CORE_PRIMITIVES = Object.freeze([
   "workspace.sources.route",
   "runtimes.list",
   "runtimes.dispatch",
+  "executions.observe",
   "runs.observe",
   "runs.cancel",
   "artifacts.write",
   "secrets.use",
 ]);
+
+export const SPS_EXECUTIONS_OBSERVE_REQUIRED_CAPABILITY = "sps.executions.read";
 
 const CORE_PRIMITIVE_SET = new Set(SPS_CORE_PRIMITIVES);
 const EXTENSION_KINDS = new Set([
@@ -141,6 +144,7 @@ export function inspectSpsExtensionProfileV2(manifest) {
       }
       if (corePrimitives.some((primitive) => primitive.startsWith("workspace.sources."))) features.push("workspace_source");
       if (corePrimitives.some((primitive) => primitive.startsWith("runtimes."))) features.push("runtime");
+      if (corePrimitives.includes("executions.observe")) features.push("execution_observability");
       if (corePrimitives.includes("runs.observe")) features.push("run_observability");
       if (corePrimitives.includes("artifacts.write")) features.push("artifact");
       if (corePrimitives.includes("secrets.use")) features.push("secret_reference");

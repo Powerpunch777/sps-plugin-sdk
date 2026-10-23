@@ -64,17 +64,19 @@ file path or credential.
 | `2.0` | Workflow-neutral SPS Core contract | Use for new plugins. |
 
 Profile v2 makes a finite set of technical primitives available: Workspace
-Source metadata and routes, runtime discovery and dispatch, run observation
-and cancellation, artifact writing, and secret references. A plugin defines
+Source metadata and routes, runtime discovery and dispatch, cross-lane execution
+history and SPS-dispatched run observation/cancellation, artifact writing, and
+secret references. A plugin defines
 its own workflow meaning on top of those primitives.
 
 ## Runtime facade
 
-The `runs.list` and `runs.cancel` APIs below are unreleased SDK-source changes;
-they are not present in the published `@sonparkserver/plugin-sdk` v0.11.0 tag.
-The runtime contract version remains `1.0`, but matching protocol versions do
-not establish Host support. Confirm support in the target Host independently
-before relying on either operation.
+The `executions.list`, `executions.get`, `runs.list`, and `runs.cancel` APIs
+below are unreleased pinned-source additions; they are not present in the
+published `@sonparkserver/plugin-sdk` v0.11.0 tag. Consumers need to pin an SDK
+source revision containing these additions. The runtime contract version
+remains `1.0`, but matching protocol versions do not establish Host support.
+Confirm support in the target Host independently before relying on them.
 
 New Worker code can import the explicit public entrypoint:
 
@@ -83,9 +85,26 @@ import { createSpsRuntimeClient, defineSpsRuntimeContract } from "@sonparkserver
 
 const runtime = createSpsRuntimeClient(ctx.spsTransport);
 const declaration = defineSpsRuntimeContract({
-  primitives: ["runtimes.list", "runtimes.dispatch", "runs.observe", "runs.cancel"],
+  primitives: ["runtimes.list", "runtimes.dispatch", "executions.observe", "runs.observe", "runs.cancel"],
 });
 ```
+
+`runtime.executions.list(companyId, options)` and
+`runtime.executions.get(companyId, lane, runId)` expose read-only, own-plugin
+history across the `node` and `agent_session` lanes. They require the
+`executions.observe` primitive, which maps to `sps.executions.read`, and the
+Worker rejects reads without a matching authenticated invocation company.
+Listing accepts an optional lane, a limit from 1 through 100, and a cursor
+containing a canonical UTC ISO timestamp with milliseconds, UUID run ID, and
+lane. `get` returns `null` when no matching execution exists. This is history
+observation only: it does not replace either execution engine, add mutations or
+cancellation policy, or introduce a role model.
+
+Usage evidence is deliberately explicit. `reported` means reported by the
+execution adapter, not independently verified billing; `unavailable` is not
+zero. Older history without explicit usage evidence remains unavailable rather
+than being inferred as zero. A cost value with `subscription_reference` basis
+may describe a subscription reference amount, not an actual charge.
 
 `runtime.runs.list(companyId, options)` uses the `runs.observe` primitive and
 accepts optional `subjectKey`, `status`, `limit`, and `beforeId` filters.
@@ -112,7 +131,7 @@ can route execution.
 Plugins that need a Worker can use the public `worker` entrypoint without a
 private SPS Core checkout or a Paperclip package. It owns only a small
 newline-delimited JSON-RPC lifecycle: `initialize`, `health`, and `shutdown`.
-It exposes the same finite twelve-operation `spsTransport` used by the Runtime
+It exposes the same finite fourteen-operation `spsTransport` used by the Runtime
 facade. Logs must go to stderr; stdout is reserved for JSON-RPC messages.
 The Host receives the Core `InitializeResult` `{ ok: true, supportedMethods }`;
 an `initialize` handler's return value is private setup data, not a protocol

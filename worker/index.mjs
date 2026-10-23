@@ -18,6 +18,7 @@ const PLATFORM_HOST_OPERATIONS = new Set([
   "inbox.publish", "inbox.update", "inbox.withdraw",
   ...Object.keys(PLATFORM_AGENT_OPERATIONS),
 ]);
+const EXECUTION_READ_OPERATIONS = new Set(["sps.executions.list", "sps.executions.get"]);
 const JSON_RPC_VERSION = "2.0";
 const SURFACE_ID_RE = /^[a-z0-9][a-z0-9._-]*$/;
 
@@ -153,6 +154,15 @@ export function runSpsWorker(plugin, options = {}) {
     request(operation, inputValue) {
       if (!RUNTIME_OPERATION_SET.has(operation)) {
         return Promise.reject(new TypeError(`Unsupported SPS Runtime operation: ${String(operation)}.`));
+      }
+      if (EXECUTION_READ_OPERATIONS.has(operation)) {
+        const requestedCompanyId = isRecord(inputValue) ? inputValue.companyId : undefined;
+        const invocationCompanyId = invocationStorage.getStore()?.scope?.companyId;
+        if (typeof requestedCompanyId !== "string" || requestedCompanyId.length === 0 ||
+          typeof invocationCompanyId !== "string" || invocationCompanyId.length === 0 ||
+          requestedCompanyId !== invocationCompanyId) {
+          return Promise.reject(new Error("SPS execution access must match the authenticated invocation company."));
+        }
       }
       return callHost(operation, inputValue);
     },
