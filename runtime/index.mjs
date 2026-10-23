@@ -16,7 +16,9 @@ export const SPS_RUNTIME_OPERATIONS = Object.freeze([
   "sps.executionGrants.revoke",
   "sps.runs.dispatch",
   "sps.runs.get",
+  "sps.runs.list",
   "sps.runs.listEvents",
+  "sps.runs.cancel",
   "sps.artifacts.publish",
   "sps.artifacts.list",
 ]);
@@ -198,12 +200,32 @@ export function createSpsRuntimeClient(transport) {
           runId: assertNonEmptyString(runId, "runId"),
         });
       },
+      list(companyId, options = {}) {
+        const input = assertRecord(options, "options");
+        const limit = nullableInteger(input.limit, "limit", 1);
+        if (limit !== undefined && limit !== null && limit > 200) {
+          throw new TypeError("limit must be less than or equal to 200.");
+        }
+        return request(clientTransport, "sps.runs.list", {
+          companyId: assertNonEmptyString(companyId, "companyId"),
+          subjectKey: nullableString(input.subjectKey, "subjectKey"),
+          status: nullableString(input.status, "status"),
+          limit,
+          beforeId: nullableString(input.beforeId, "beforeId"),
+        });
+      },
       listEvents(companyId, runId, options = {}) {
         const input = assertRecord(options, "options");
         return request(clientTransport, "sps.runs.listEvents", {
           companyId: assertNonEmptyString(companyId, "companyId"),
           runId: assertNonEmptyString(runId, "runId"),
           afterSequence: nullableInteger(input.afterSequence, "afterSequence", 0),
+        });
+      },
+      cancel(companyId, runId) {
+        return request(clientTransport, "sps.runs.cancel", {
+          companyId: assertNonEmptyString(companyId, "companyId"),
+          runId: assertNonEmptyString(runId, "runId"),
         });
       },
     }),

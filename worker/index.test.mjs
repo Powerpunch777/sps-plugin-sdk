@@ -72,7 +72,9 @@ test("portable Worker correlates finite Runtime requests across lifecycle messag
   const plugin = defineSpsPlugin({
     async initialize({ spsTransport }) {
       const runtimes = await spsTransport.request("sps.runtimes.list", { companyId: "company-1" });
-      return { initialized: Array.isArray(runtimes) };
+      const runs = await spsTransport.request("sps.runs.list", { companyId: "company-1", status: "running" });
+      const cancelled = await spsTransport.request("sps.runs.cancel", { companyId: "company-1", runId: "run-1" });
+      return { initialized: Array.isArray(runtimes) && Array.isArray(runs), cancelled: cancelled.status === "cancelling" };
     },
     health() { return { status: "ok" }; },
     shutdown() { return { stopped: true }; },
@@ -83,13 +85,19 @@ test("portable Worker correlates finite Runtime requests across lifecycle messag
   assert.deepEqual(lines[0], { jsonrpc: "2.0", id: "sps-1", method: "sps.runtimes.list", params: { companyId: "company-1" } });
   input.write('{"jsonrpc":"2.0","id":"sps-1","result":[]}\n');
   await eventually(() => lines.length === 2);
-  assert.deepEqual(lines[1], { jsonrpc: "2.0", id: 1, result: { ok: true, supportedMethods: ["health", "shutdown"] } });
-  input.write('{"jsonrpc":"2.0","id":2,"method":"health"}\n');
+  assert.deepEqual(lines[1], { jsonrpc: "2.0", id: "sps-2", method: "sps.runs.list", params: { companyId: "company-1", status: "running" } });
+  input.write('{"jsonrpc":"2.0","id":"sps-2","result":[]}\n');
   await eventually(() => lines.length === 3);
-  assert.deepEqual(lines[2], { jsonrpc: "2.0", id: 2, result: { status: "ok" } });
-  input.write('{"jsonrpc":"2.0","id":3,"method":"shutdown"}\n');
+  assert.deepEqual(lines[2], { jsonrpc: "2.0", id: "sps-3", method: "sps.runs.cancel", params: { companyId: "company-1", runId: "run-1" } });
+  input.write('{"jsonrpc":"2.0","id":"sps-3","result":{"status":"cancelling"}}\n');
   await eventually(() => lines.length === 4);
-  assert.deepEqual(lines[3], { jsonrpc: "2.0", id: 3, result: { stopped: true } });
+  assert.deepEqual(lines[3], { jsonrpc: "2.0", id: 1, result: { ok: true, supportedMethods: ["health", "shutdown"] } });
+  input.write('{"jsonrpc":"2.0","id":2,"method":"health"}\n');
+  await eventually(() => lines.length === 5);
+  assert.deepEqual(lines[4], { jsonrpc: "2.0", id: 2, result: { status: "ok" } });
+  input.write('{"jsonrpc":"2.0","id":3,"method":"shutdown"}\n');
+  await eventually(() => lines.length === 6);
+  assert.deepEqual(lines[5], { jsonrpc: "2.0", id: 3, result: { stopped: true } });
   await worker.closed;
 });
 

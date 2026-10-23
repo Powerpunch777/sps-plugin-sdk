@@ -38,12 +38,16 @@ test("an external temporary project imports the packed public runtime facade", {
     await fs.writeFile(path.join(root, "package.json"), JSON.stringify({ name: "sps-sdk-consumer-smoke", private: true, type: "module" }));
     await run("npm", ["install", "--ignore-scripts", "--no-audit", "--no-fund", tarball], root);
     await fs.writeFile(path.join(root, "smoke.ts"), [
-      'import { createSpsRuntimeClient, defineSpsRuntimeContract, type PluginSpsRuntime, type SpsRuntimeTransport } from "@sonparkserver/plugin-sdk/runtime";',
+      'import { createSpsRuntimeClient, defineSpsRuntimeContract, type PluginSpsRun, type PluginSpsRuntime, type SpsRuntimeTransport } from "@sonparkserver/plugin-sdk/runtime";',
       'const transport: SpsRuntimeTransport = { request: async () => [] };',
       'const runtime = createSpsRuntimeClient(transport);',
       'const runtimes: Promise<PluginSpsRuntime[]> = runtime.runtimes.list("external-company", { nodeId: null });',
-      'const contract = defineSpsRuntimeContract({ primitives: ["runtimes.list", "runtimes.dispatch"] });',
+      'const runs: Promise<PluginSpsRun[]> = runtime.runs.list("external-company", { subjectKey: null, status: "running", limit: 10, beforeId: null });',
+      'const cancelled: Promise<PluginSpsRun> = runtime.runs.cancel("external-company", "run-1");',
+      'const contract = defineSpsRuntimeContract({ primitives: ["runtimes.list", "runtimes.dispatch", "runs.observe", "runs.cancel"] });',
       'void runtimes;',
+      'void runs;',
+      'void cancelled;',
       'void contract;',
     ].join("\n"));
     await run(process.execPath, [
@@ -55,9 +59,10 @@ test("an external temporary project imports the packed public runtime facade", {
       'import { createSpsRuntimeClient, defineSpsRuntimeContract } from "@sonparkserver/plugin-sdk/runtime";',
       'const calls = [];',
       'const runtime = createSpsRuntimeClient({ request: async (operation, input) => { calls.push({ operation, input }); return { ok: true }; } });',
-      'await runtime.runtimes.list("external-company");',
-      'const contract = defineSpsRuntimeContract({ primitives: ["runtimes.list"] });',
-      'if (calls[0].operation !== "sps.runtimes.list" || contract.contractVersion !== "2.0") process.exit(1);',
+      'await runtime.runs.list("external-company", { status: "queued", limit: 5 });',
+      'await runtime.runs.cancel("external-company", "run-1");',
+      'const contract = defineSpsRuntimeContract({ primitives: ["runs.observe", "runs.cancel"] });',
+      'if (calls[0].operation !== "sps.runs.list" || calls[0].input.status !== "queued" || calls[1].operation !== "sps.runs.cancel" || contract.contractVersion !== "2.0") process.exit(1);',
     ].join("\n"));
     await run("node", ["smoke.mjs"], root);
     assert.ok(await fs.stat(path.join(root, "node_modules", "@sonparkserver", "plugin-sdk", "runtime", "index.mjs")));

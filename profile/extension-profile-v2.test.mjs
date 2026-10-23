@@ -17,6 +17,7 @@ test("accepts a workplane without Paperclip task or session assumptions", () => 
         "runtimes.list",
         "runtimes.dispatch",
         "runs.observe",
+        "runs.cancel",
       ],
     },
   });
@@ -29,6 +30,7 @@ test("accepts a workplane without Paperclip task or session assumptions", () => 
     "runtimes.list",
     "runtimes.dispatch",
     "runs.observe",
+    "runs.cancel",
   ]);
 });
 
@@ -67,6 +69,7 @@ test("exports the public, finite primitive vocabulary", () => {
     "runtimes.list",
     "runtimes.dispatch",
     "runs.observe",
+    "runs.cancel",
     "artifacts.write",
     "secrets.use",
   ]);

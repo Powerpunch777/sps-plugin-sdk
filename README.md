@@ -64,11 +64,17 @@ file path or credential.
 | `2.0` | Workflow-neutral SPS Core contract | Use for new plugins. |
 
 Profile v2 makes a finite set of technical primitives available: Workspace
-Source metadata and routes, runtime discovery and dispatch, run observation,
-artifact writing, and secret references. A plugin defines its own workflow
-meaning on top of those primitives.
+Source metadata and routes, runtime discovery and dispatch, run observation
+and cancellation, artifact writing, and secret references. A plugin defines
+its own workflow meaning on top of those primitives.
 
 ## Runtime facade
+
+The `runs.list` and `runs.cancel` APIs below are unreleased SDK-source changes;
+they are not present in the published `@sonparkserver/plugin-sdk` v0.11.0 tag.
+The runtime contract version remains `1.0`, but matching protocol versions do
+not establish Host support. Confirm support in the target Host independently
+before relying on either operation.
 
 New Worker code can import the explicit public entrypoint:
 
@@ -77,9 +83,20 @@ import { createSpsRuntimeClient, defineSpsRuntimeContract } from "@sonparkserver
 
 const runtime = createSpsRuntimeClient(ctx.spsTransport);
 const declaration = defineSpsRuntimeContract({
-  primitives: ["runtimes.list", "runtimes.dispatch", "runs.observe"],
+  primitives: ["runtimes.list", "runtimes.dispatch", "runs.observe", "runs.cancel"],
 });
 ```
+
+`runtime.runs.list(companyId, options)` uses the `runs.observe` primitive and
+accepts optional `subjectKey`, `status`, `limit`, and `beforeId` filters.
+Results are ordered by descending UUID, not chronologically. `beforeId` is an
+opaque run-ID cursor; pass it through as returned rather than parsing or
+constructing it. `limit`, when provided, must be an integer from 1 through 200.
+`runtime.runs.cancel(companyId, runId)` requires `runs.cancel`. A queued run
+may become terminal with status `cancelled`; a claimed or running run reports
+`cancelling` until Node completion is acknowledged. Run statuses remain
+strings so clients can handle future statuses without an SDK version change.
+This operation applies only to SPS-dispatched runs, not agent sessions.
 
 An SPS Desktop Host adapter must inject `ctx.spsTransport` when it launches a
 Worker. The facade sends the existing `sps.*` Worker RPC names and payloads
@@ -95,7 +112,7 @@ can route execution.
 Plugins that need a Worker can use the public `worker` entrypoint without a
 private SPS Core checkout or a Paperclip package. It owns only a small
 newline-delimited JSON-RPC lifecycle: `initialize`, `health`, and `shutdown`.
-It exposes the same finite ten-operation `spsTransport` used by the Runtime
+It exposes the same finite twelve-operation `spsTransport` used by the Runtime
 facade. Logs must go to stderr; stdout is reserved for JSON-RPC messages.
 The Host receives the Core `InitializeResult` `{ ok: true, supportedMethods }`;
 an `initialize` handler's return value is private setup data, not a protocol
@@ -429,7 +446,7 @@ An intentionally small Profile v2 declaration looks like this:
   },
   "sps": {
     "contractVersion": "2.0",
-    "primitives": ["runtimes.list", "runtimes.dispatch", "runs.observe"]
+    "primitives": ["runtimes.list", "runtimes.dispatch", "runs.observe", "runs.cancel"]
   }
 }
 ```

@@ -27,7 +27,9 @@ enforcer. Session create should omit `taskKey` to use Core's default namespace,
 or use `plugin:<plugin-id>:session:<plugin-owned-key>` when a stable key is
 needed. A custom key outside this namespace cannot be sent to or listed.
 
-This facade does not offer per-message model overrides or run cancellation.
-Closing or forgetting a session must not be presented as cancelling its run.
-Agent configuration and execution routing continue to belong to the Host.
+The agent-session facade does not offer per-message model overrides or
+cancellation. `runtime.runs.cancel` applies only to runs dispatched through the
+SPS Runtime facade; it does not cancel agent-session work. Closing or forgetting
+a session must not be presented as cancelling its run. Agent configuration and
+execution routing continue to belong to the Host.
 No arbitrary Host RPC operation or private Core module import is exposed.

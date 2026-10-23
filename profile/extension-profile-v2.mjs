@@ -11,6 +11,7 @@ export const SPS_CORE_PRIMITIVES = Object.freeze([
   "runtimes.list",
   "runtimes.dispatch",
   "runs.observe",
+  "runs.cancel",
   "artifacts.write",
   "secrets.use",
 ]);

@@ -2,7 +2,8 @@ export const SPS_RUNTIME_CONTRACT_VERSION: "1.0";
 export const SPS_RUNTIME_OPERATIONS: readonly [
   "sps.workspaceSources.list", "sps.runtimes.list", "sps.executionGrants.list",
   "sps.executionGrants.upsert", "sps.executionGrants.revoke", "sps.runs.dispatch",
-  "sps.runs.get", "sps.runs.listEvents", "sps.artifacts.publish", "sps.artifacts.list"
+  "sps.runs.get", "sps.runs.list", "sps.runs.listEvents", "sps.runs.cancel",
+  "sps.artifacts.publish", "sps.artifacts.list"
 ];
 
 export type SpsRuntimeOperation = (typeof SPS_RUNTIME_OPERATIONS)[number];
@@ -14,6 +15,7 @@ export type SpsCorePrimitive =
   | "runtimes.list"
   | "runtimes.dispatch"
   | "runs.observe"
+  | "runs.cancel"
   | "artifacts.write"
   | "secrets.use";
 
@@ -29,6 +31,7 @@ export interface SpsRuntimeTransport {
 }
 export interface PluginSpsExecutionGrantInput { companyId: string; subjectKey: string; nodeId: string; runnerProfileId: string; workspaceSourceId?: string | null; }
 export interface PluginSpsRunDispatchInput { companyId: string; executionGrantId: string; args: string[]; env?: Record<string, string>; stdin?: string | null; timeoutMs?: number | null; }
+export interface PluginSpsRunListOptions { subjectKey?: string | null; status?: string | null; limit?: number | null; beforeId?: string | null; }
 export interface PluginSpsArtifactPublishInput { companyId: string; subjectKey: string; runId?: string | null; title: string; kind?: string | null; referenceUrl?: string | null; summary?: string | null; data?: JsonObject; }
 
 export interface PluginSpsClient {
@@ -42,7 +45,9 @@ export interface PluginSpsClient {
   readonly runs: {
     dispatch(input: PluginSpsRunDispatchInput): Promise<PluginSpsRun>;
     get(companyId: string, runId: string): Promise<PluginSpsRun>;
+    list(companyId: string, options?: PluginSpsRunListOptions): Promise<PluginSpsRun[]>;
     listEvents(companyId: string, runId: string, options?: { afterSequence?: number | null }): Promise<PluginSpsRunEvent[]>;
+    cancel(companyId: string, runId: string): Promise<PluginSpsRun>;
   };
   readonly artifacts: {
     publish(input: PluginSpsArtifactPublishInput): Promise<PluginSpsArtifact>;
