@@ -1,7 +1,7 @@
 export const SPS_PLATFORM_CONTRACT_VERSION: "1.0";
 export const SPS_PLATFORM_CAPABILITIES: readonly [
   "agent.tools.register", "events.subscribe", "events.emit", "jobs.schedule", "plugin.state.read", "plugin.state.write",
-  "agents.read", "agent.sessions.create", "agent.sessions.list", "agent.sessions.send"
+  "agents.read", "agent.sessions.create", "agent.sessions.list", "agent.sessions.send", "agent.sessions.read", "agent.sessions.cancel"
 ];
 
 export type SpsPlatformCapability = (typeof SPS_PLATFORM_CAPABILITIES)[number];
@@ -18,6 +18,14 @@ export interface SpsPlatformStateClient {
   set(input: SpsStateKey, value: JsonValue): Promise<void>;
   delete(input: SpsStateKey): Promise<void>;
 }
+export interface SpsAgentSessionRunResult {
+  runId: string;
+  status: string;
+  cancellationRequested: boolean;
+  termination: "not_applicable" | "pending" | "confirmed";
+  errorCode: string | null;
+  error: string | null;
+}
 /** The narrow Worker-to-Host API available while a declared handler runs. */
 export interface SpsPlatformInvocationContext {
   readonly events: {
@@ -32,6 +40,8 @@ export interface SpsAgentSessionClient {
     create(agentId: string, companyId: string, options?: { taskKey?: string; reason?: string }): Promise<{ sessionId: string }>;
     list(agentId: string, companyId: string): Promise<Array<Record<string, JsonValue>>>;
     sendMessage(sessionId: string, companyId: string, options: { prompt: string; reason?: string; onEvent?: (event: Record<string, JsonValue>) => void }): Promise<{ runId: string }>;
+    getRun(sessionId: string, companyId: string, runId: string): Promise<SpsAgentSessionRunResult>;
+    cancel(sessionId: string, companyId: string, runId: string): Promise<SpsAgentSessionRunResult>;
   };
 }
 export interface SpsActionContext extends SpsPlatformInvocationContext {

@@ -5,10 +5,18 @@ import { SPS_RUNTIME_OPERATIONS } from "../runtime/index.mjs";
 const RUNTIME_OPERATION_SET = new Set(SPS_RUNTIME_OPERATIONS);
 const LIFECYCLE_METHODS = new Set(["initialize", "health", "shutdown"]);
 const PLATFORM_METHODS = new Set(["executeTool", "onEvent", "runJob", "getData", "performAction"]);
+const PLATFORM_AGENT_OPERATIONS = Object.freeze({
+  "agents.list": "agents.read",
+  "agents.sessions.create": "agent.sessions.create",
+  "agents.sessions.list": "agent.sessions.list",
+  "agents.sessions.sendMessage": "agent.sessions.send",
+  "agents.sessions.getRun": "agent.sessions.read",
+  "agents.sessions.cancel": "agent.sessions.cancel",
+});
 const PLATFORM_HOST_OPERATIONS = new Set([
   "state.get", "state.set", "state.delete", "events.emit", "events.subscribe",
   "inbox.publish", "inbox.update", "inbox.withdraw",
-  "agents.list", "agents.sessions.create", "agents.sessions.list", "agents.sessions.sendMessage",
+  ...Object.keys(PLATFORM_AGENT_OPERATIONS),
 ]);
 const JSON_RPC_VERSION = "2.0";
 const SURFACE_ID_RE = /^[a-z0-9][a-z0-9._-]*$/;
@@ -97,6 +105,7 @@ export function runSpsWorker(plugin, options = {}) {
   const pending = new Map();
   const sessionCallbacks = new Map();
   const invocationStorage = new AsyncLocalStorage();
+  const agentTenantStorage = new AsyncLocalStorage();
   const controller = new AbortController();
   let resolveClosed;
   const closedPromise = new Promise((resolve) => { resolveClosed = resolve; });
@@ -149,24 +158,42 @@ export function runSpsWorker(plugin, options = {}) {
     },
   });
 
-  function agentRequest(capability, operation, params) {
+  function agentRequest(operation, params, requireTenant = false) {
+    const capability = Object.hasOwn(PLATFORM_AGENT_OPERATIONS, operation) ? PLATFORM_AGENT_OPERATIONS[operation] : undefined;
+    if (!capability) {
+      return Promise.reject(new TypeError(`Unsupported SPS Agent operation: ${String(operation)}.`));
+    }
     if (!definition.handlers.platform?.capabilities.includes(capability)) {
       return Promise.reject(new Error(`Undeclared SPS Platform capability: ${capability}.`));
     }
+    if (requireTenant) {
+      const tenant = agentTenantStorage.getStore();
+      const companyId = typeof tenant?.companyId === "string" ? tenant.companyId : tenant?.invocationCompanyId;
+      if (typeof companyId !== "string" || companyId.length === 0 || params.companyId !== companyId ||
+        (typeof tenant?.companyId === "string" && typeof tenant?.invocationCompanyId === "string" && tenant.companyId !== tenant.invocationCompanyId)) {
+        return Promise.reject(new Error("SPS Agent access must match the authenticated invocation company."));
+      }
+    }
     return callHost(operation, params);
+  }
+  function withAgentTenant(companyId, handler) {
+    const invocationCompanyId = invocationStorage.getStore()?.scope?.companyId;
+    return agentTenantStorage.run({ companyId, invocationCompanyId }, handler);
   }
   const platform = Object.freeze({
     agents: Object.freeze({
-      list(input) { return agentRequest("agents.read", "agents.list", input); },
+      list(input) { return agentRequest("agents.list", input); },
       sessions: Object.freeze({
-        create(agentId, companyId, options = {}) { return agentRequest("agent.sessions.create", "agents.sessions.create", { ...options, agentId, companyId }); },
-        list(agentId, companyId) { return agentRequest("agent.sessions.list", "agents.sessions.list", { agentId, companyId }); },
+        create(agentId, companyId, options = {}) { return agentRequest("agents.sessions.create", { ...options, agentId, companyId }); },
+        list(agentId, companyId) { return agentRequest("agents.sessions.list", { agentId, companyId }); },
         async sendMessage(sessionId, companyId, options) {
           if (options.onEvent) sessionCallbacks.set(sessionId, options.onEvent);
           try {
-            return await agentRequest("agent.sessions.send", "agents.sessions.sendMessage", { sessionId, companyId, prompt: options.prompt, ...(options.reason ? { reason: options.reason } : {}) });
+            return await agentRequest("agents.sessions.sendMessage", { sessionId, companyId, prompt: options.prompt, ...(options.reason ? { reason: options.reason } : {}) });
           } catch (error) { sessionCallbacks.delete(sessionId); throw error; }
         },
+        getRun(sessionId, companyId, runId) { return agentRequest("agents.sessions.getRun", { sessionId, companyId, runId }, true); },
+        cancel(sessionId, companyId, runId) { return agentRequest("agents.sessions.cancel", { sessionId, companyId, runId }, true); },
       }),
     }),
     events: Object.freeze({
@@ -303,7 +330,7 @@ export function runSpsWorker(plugin, options = {}) {
         || (params.companyId !== undefined && params.actorContext.companyId !== params.companyId)) throw new TypeError("Invalid authenticated performAction context.");
       const registration = definition.handlers.platform?.actions?.find(action => action.key === params.key);
       if (!registration) throw Object.assign(new Error(`Unknown SPS Platform action: ${params.key}.`), { code: -32601 });
-      return registration.handler(params.params ?? {}, { ...platform, companyId: params.actorContext.companyId, actor: Object.freeze({ ...params.actorContext }) });
+      return withAgentTenant(params.actorContext.companyId, () => registration.handler(params.params ?? {}, { ...platform, companyId: params.actorContext.companyId, actor: Object.freeze({ ...params.actorContext }) }));
     }
     if (method === "getData") {
       if (!isRecord(params) || typeof params.key !== "string" || !isRecord(params.params ?? {}) || !isJsonValue(params.params ?? {}) ||
@@ -313,29 +340,31 @@ export function runSpsWorker(plugin, options = {}) {
       }
       const registration = definition.handlers.platform?.data.find((provider) => provider.key === params.key);
       if (!registration) throw Object.assign(new Error(`Unknown SPS Platform data provider: ${params.key}`), { code: -32601 });
-      return registration.handler({
+      return withAgentTenant(params.companyId, () => registration.handler({
         ...(params.params ?? {}),
         ...(params.companyId === undefined ? {} : { companyId: params.companyId }),
         ...(params.renderEnvironment === undefined ? {} : { renderEnvironment: params.renderEnvironment }),
-      }, platform);
+      }, platform));
     }
     if (method === "executeTool") {
       if (!isRecord(params) || typeof params.toolName !== "string" || !isJsonValue(params.parameters) || !isJsonValue(params.runContext)) throw new TypeError("Invalid executeTool params.");
       const registration = definition.handlers.platform?.tools.find((tool) => tool.name === params.toolName);
       if (!registration) throw Object.assign(new Error(`Unknown SPS Platform tool: ${params.toolName}.`), { code: -32601 });
-      return registration.handler(params.parameters, params.runContext, platform);
+      return withAgentTenant(params.runContext.companyId, () => registration.handler(params.parameters, params.runContext, platform));
     }
     if (method === "onEvent") {
       if (!isRecord(params) || !isRecord(params.event) || typeof params.event.eventType !== "string" || !isJsonValue(params.event)) throw new TypeError("Invalid onEvent params.");
       const registrations = definition.handlers.platform?.events.filter((event) => event.name === params.event.eventType) ?? [];
       if (registrations.length === 0) throw Object.assign(new Error(`Unknown SPS Platform event: ${params.event.eventType}.`), { code: -32601 });
-      for (const registration of registrations) await registration.handler(params.event, platform);
+      for (const registration of registrations) {
+        await withAgentTenant(params.event.companyId, () => registration.handler(params.event, platform));
+      }
       return null;
     }
     if (!isRecord(params) || !isRecord(params.job) || typeof params.job.jobKey !== "string" || !isJsonValue(params.job)) throw new TypeError("Invalid runJob params.");
     const registration = definition.handlers.platform?.jobs.find((job) => job.jobKey === params.job.jobKey);
     if (!registration) throw Object.assign(new Error(`Unknown SPS Platform job: ${params.job.jobKey}.`), { code: -32601 });
-    return registration.handler(params.job, platform);
+    return withAgentTenant(params.job.companyId, () => registration.handler(params.job, platform));
   }
 
   async function handleHostRequest(message) {

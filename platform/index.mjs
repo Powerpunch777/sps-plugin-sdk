@@ -11,6 +11,8 @@ export const SPS_PLATFORM_CAPABILITIES = Object.freeze([
   "agent.sessions.create",
   "agent.sessions.list",
   "agent.sessions.send",
+  "agent.sessions.read",
+  "agent.sessions.cancel",
 ]);
 
 const CAPABILITY_SET = new Set(SPS_PLATFORM_CAPABILITIES);

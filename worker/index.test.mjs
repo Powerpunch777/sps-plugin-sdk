@@ -34,6 +34,112 @@ test("Agent session callbacks receive terminal events and are released once", as
   input.end();await worker.closed;
 });
 
+test("Agent session run inspection and cancellation use the exact bounded Core requests", async () => {
+  const inspected = { runId: "run-1", status: "running", cancellationRequested: false, termination: "not_applicable", errorCode: null, error: null };
+  const cancellation = { runId: "run-1", status: "cancelling", cancellationRequested: true, termination: "pending", errorCode: null, error: null };
+  const { input, lines, worker } = createHarness(defineSpsPlugin({ platform: defineSpsPlatformContract({
+    capabilities: ["agent.sessions.read", "agent.sessions.cancel"],
+    actions: [{ key: "run", handler: async (_params, context) => ({
+      inspected: await context.agents.sessions.getRun("session-1", "company-1", "run-1"),
+      cancellation: await context.agents.sessions.cancel("session-1", "company-1", "run-1"),
+    }) }],
+  }) }));
+  input.write(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: {} }) + "\n");
+  await eventually(() => lines.length === 1);
+  input.write(JSON.stringify({
+    jsonrpc: "2.0", id: 2, method: "performAction",
+    paperclipInvocation: { id: "inv-1", scope: { companyId: "company-1" } },
+    params: { key: "run", companyId: "company-1", params: {}, actorContext: { type: "user", companyId: "company-1" } },
+  }) + "\n");
+  await eventually(() => lines.length === 2);
+  assert.deepEqual(lines[1], {
+    jsonrpc: "2.0", id: "sps-1", method: "agents.sessions.getRun",
+    params: { sessionId: "session-1", companyId: "company-1", runId: "run-1" },
+    paperclipInvocationId: "inv-1",
+  });
+  input.write(JSON.stringify({ jsonrpc: "2.0", id: "sps-1", result: inspected }) + "\n");
+  await eventually(() => lines.length === 3);
+  assert.deepEqual(lines[2], {
+    jsonrpc: "2.0", id: "sps-2", method: "agents.sessions.cancel",
+    params: { sessionId: "session-1", companyId: "company-1", runId: "run-1" },
+    paperclipInvocationId: "inv-1",
+  });
+  input.write(JSON.stringify({ jsonrpc: "2.0", id: "sps-2", result: cancellation }) + "\n");
+  await eventually(() => lines.length === 4);
+  assert.deepEqual(lines[3], { jsonrpc: "2.0", id: 2, result: { inspected, cancellation } });
+  input.end();
+  await worker.closed;
+});
+
+test("Agent session run methods enforce their dedicated capabilities and invocation tenant", async () => {
+  const cases = [
+    { capabilities: ["agent.sessions.cancel"], expected: /Undeclared.*agent\.sessions\.read/, invoke: (agents) => agents.sessions.getRun("s", "company-1", "r") },
+    { capabilities: ["agent.sessions.read"], expected: /Undeclared.*agent\.sessions\.cancel/, invoke: (agents) => agents.sessions.cancel("s", "company-1", "r") },
+    { capabilities: ["agent.sessions.read"], expected: /authenticated invocation company/, invoke: (agents) => agents.sessions.getRun("s", "company-2", "r") },
+  ];
+  for (const [index, scenario] of cases.entries()) {
+    const { input, lines, worker } = createHarness(defineSpsPlugin({ platform: defineSpsPlatformContract({
+      capabilities: scenario.capabilities,
+      actions: [{ key: "run", handler: (_params, context) => scenario.invoke(context.agents) }],
+    }) }));
+    input.write(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: {} }) + "\n");
+    await eventually(() => lines.length === 1);
+    input.write(JSON.stringify({
+      jsonrpc: "2.0", id: 2, method: "performAction",
+      paperclipInvocation: { id: `inv-${index}`, scope: { companyId: "company-1" } },
+      params: { key: "run", companyId: "company-1", params: {}, actorContext: { type: "user", companyId: "company-1" } },
+    }) + "\n");
+    await eventually(() => lines.length === 2);
+    assert.match(lines[1].error.message, scenario.expected);
+    assert.equal(lines.some((line) => line.method?.startsWith("agents.sessions.")), false);
+    input.end();
+    await worker.closed;
+  }
+});
+
+test("Agent cancellation acknowledgement does not terminate or clear the session callback", async () => {
+  const events = [];
+  const { input, lines, worker } = createHarness(defineSpsPlugin({ platform: defineSpsPlatformContract({
+    capabilities: ["agent.sessions.send", "agent.sessions.cancel"],
+    actions: [{ key: "cancel", handler: async (_params, context) => {
+      const sent = await context.agents.sessions.sendMessage("session-1", "company-1", { prompt: "hello", onEvent: (event) => events.push(event.eventType) });
+      const result = await context.agents.sessions.cancel("session-1", "company-1", sent.runId);
+      return { sent, result };
+    } }],
+  }) }));
+  input.write(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: {} }) + "\n");
+  await eventually(() => lines.length === 1);
+  input.write(JSON.stringify({
+    jsonrpc: "2.0", id: 2, method: "performAction",
+    paperclipInvocation: { id: "inv-cancel", scope: { companyId: "company-1" } },
+    params: { key: "cancel", companyId: "company-1", params: {}, actorContext: { type: "user", companyId: "company-1" } },
+  }) + "\n");
+  await eventually(() => lines.length === 2);
+  assert.equal(lines[1].method, "agents.sessions.sendMessage");
+  input.write(JSON.stringify({ jsonrpc: "2.0", id: lines[1].id, result: { runId: "run-1" } }) + "\n");
+  await eventually(() => lines.length === 3);
+  assert.deepEqual(lines[2], {
+    jsonrpc: "2.0", id: "sps-2", method: "agents.sessions.cancel",
+    params: { sessionId: "session-1", companyId: "company-1", runId: "run-1" },
+    paperclipInvocationId: "inv-cancel",
+  });
+  input.write(JSON.stringify({
+    jsonrpc: "2.0", id: "sps-2",
+    result: { runId: "run-1", status: "cancelled", cancellationRequested: true, termination: "confirmed", errorCode: null, error: null },
+  }) + "\n");
+  await eventually(() => lines.length === 4);
+  assert.deepEqual(lines[3].result.result, { runId: "run-1", status: "cancelled", cancellationRequested: true, termination: "confirmed", errorCode: null, error: null });
+  assert.deepEqual(events, []);
+
+  for (const eventType of ["status", "done", "done"]) {
+    input.write(JSON.stringify({ jsonrpc: "2.0", method: "agents.sessions.event", params: { sessionId: "session-1", eventType } }) + "\n");
+  }
+  await eventually(() => events.length === 2);
+  assert.deepEqual(events, ["status", "done"]);
+  input.end();
+  await worker.closed;
+});
+
 test("Agent access without a declared capability never calls the Host", async()=>{
   const {input,lines,worker}=createHarness(defineSpsPlugin({platform:defineSpsPlatformContract({actions:[{key:"agents",handler:(_params,context)=>context.agents.list({companyId:"a"})}]})}));
   input.write(JSON.stringify({jsonrpc:"2.0",id:1,method:"initialize",params:{}})+"\n");await eventually(()=>lines.length===1);
@@ -105,6 +211,7 @@ test("Worker rejects unsupported Runtime operations before protocol output and r
   const plugin = defineSpsPlugin({
     async initialize({ spsTransport }) {
       await assert.rejects(spsTransport.request("companies.list", {}), /Unsupported SPS Runtime operation/);
+      await assert.rejects(spsTransport.request("agents.sessions.getRun", { sessionId: "s", companyId: "c", runId: "r" }), /Unsupported SPS Runtime operation/);
       return { ok: true };
     },
   });
