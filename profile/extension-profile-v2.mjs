@@ -131,6 +131,9 @@ export function inspectSpsExtensionProfileV2(manifest) {
     if (!Array.isArray(sps.primitives)) {
       errors.push("SPS Core declarations require a primitives array.");
     } else {
+      if (sps.primitives.some((primitive) => typeof primitive !== "string")) {
+        errors.push("SPS Core primitives must contain only strings.");
+      }
       corePrimitives = sps.primitives.filter((primitive) => typeof primitive === "string");
       const invalid = corePrimitives.filter((primitive) => !CORE_PRIMITIVE_SET.has(primitive));
       if (invalid.length > 0) errors.push(`Unsupported SPS Core primitives: ${[...new Set(invalid)].join(", ")}.`);

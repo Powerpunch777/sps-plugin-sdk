@@ -64,6 +64,28 @@ test("rejects invalid primitive dependencies", () => {
   assert.ok(result.errors.includes("workspace.sources.route requires workspace.sources.metadata."));
 });
 
+test("rejects non-string SPS primitives instead of silently filtering them", () => {
+  const invalidPrimitiveLists = [
+    [{ name: "runtimes.dispatch" }],
+    [null],
+    [42],
+    ["workspace.sources.metadata", { name: "runtimes.dispatch" }],
+  ];
+
+  for (const primitives of invalidPrimitiveLists) {
+    const result = inspectSpsExtensionProfileV2({
+      id: "com.example.invalid-primitives",
+      version: "1.0.0",
+      entrypoints: { worker: "./dist/worker.js" },
+      capabilities: ["agent.tools.register"],
+      sps: { contractVersion: "2.0", primitives },
+    });
+
+    assert.equal(result.valid, false);
+    assert.ok(result.errors.includes("SPS Core primitives must contain only strings."));
+  }
+});
+
 test("exports the public, finite primitive vocabulary", () => {
   assert.deepEqual(SPS_CORE_PRIMITIVES, [
     "workspace.sources.metadata",
