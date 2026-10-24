@@ -50,6 +50,13 @@ test("rejects undeclared capabilities, invalid registrations, and duplicate name
   assert.throws(() => defineSpsPlatformContract({ data: [{ key: "status", handler() {} }, { key: "status", handler() {} }] }), /duplicate/);
 });
 
+test("declares bounded agent-session run read and cancellation capabilities", () => {
+  assert.ok(SPS_PLATFORM_CAPABILITIES.includes("agent.sessions.read"));
+  assert.ok(SPS_PLATFORM_CAPABILITIES.includes("agent.sessions.cancel"));
+  const contract = defineSpsPlatformContract({ capabilities: ["agent.sessions.read", "agent.sessions.cancel"] });
+  assert.deepEqual(contract.capabilities, ["agent.sessions.read", "agent.sessions.cancel"]);
+});
+
 test("accepts only finite, acyclic plain JSON payloads", () => {
   assert.equal(isJsonValue({ values: [null, false, 0, "ok"] }), true);
   assert.deepEqual(assertJsonValue({ ok: true }), { ok: true });

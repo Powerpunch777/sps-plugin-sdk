@@ -7,6 +7,12 @@ export const SPS_PLATFORM_CAPABILITIES = Object.freeze([
   "jobs.schedule",
   "plugin.state.read",
   "plugin.state.write",
+  "agents.read",
+  "agent.sessions.create",
+  "agent.sessions.list",
+  "agent.sessions.send",
+  "agent.sessions.read",
+  "agent.sessions.cancel",
 ]);
 
 const CAPABILITY_SET = new Set(SPS_PLATFORM_CAPABILITIES);
@@ -190,5 +196,9 @@ export function defineSpsPlatformContract(contract = {}) {
       const provider = assertRecord(entry, "data provider registration");
       return defineDataProvider(provider.key, provider.handler);
     }, (provider) => provider.key, "data providers"),
+    actions: defineUnique(value.actions, (entry) => {
+      const action = assertRecord(entry, "action registration");
+      return defineDataProvider(action.key, action.handler);
+    }, (action) => action.key, "actions"),
   });
 }

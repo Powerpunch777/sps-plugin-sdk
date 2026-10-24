@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+- Add read-only, company-scoped execution history across Node and Agent Session
+  lanes through the finite Runtime and Worker transports.
+- Add Profile v2 `executions.observe` and its `sps.executions.read` capability
+  mapping, bounded cursor validation, and shared execution/usage DTO types.
+- Preserve usage provenance: adapter-reported values are not verified bills,
+  unavailable evidence is not zero, and subscription-reference costs may not be
+  actual charges.
+- Add read-only execution summaries over bounded UTC createdAt windows, with
+  explicit usage coverage and separate cost bases under the existing
+  `executions.observe` capability.
+
 ## 0.11.0 - 2026-08-01
 
 - Add a public, read-only UI data-provider declaration to the platform contract.

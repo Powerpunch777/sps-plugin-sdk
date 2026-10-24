@@ -16,7 +16,18 @@ Profile 2.0은 업무 방식에 종속되지 않는 SPS Core 경계를 정의한
 
 - Host가 관리하는 Workspace Source의 메타데이터와 보호된 route
 - 승인된 Node가 제공하는 Runtime 목록과 dispatch 요청
-- Run 상태 관찰, Artifact 작성, Secret reference
+- Node 및 Agent Session lane을 아우르는 읽기 전용 execution 이력 관찰
+- SPS dispatch Run 상태 관찰과 취소, Artifact 작성, Secret reference
+
+`executions.observe` primitive은 `sps.executions.read` capability를 요구한다.
+Execution 요약도 동일한 읽기 전용 capability를 사용하며 새 권한을 추가하지 않는다.
+요약은 최대 31일의 `createdAt` 구간을 한 DB snapshot에서 계산하고, 대상 이력이
+10,000건을 넘으면 일부 결과를 반환하지 않고 거부한다. 사용량 근거와 비용 기준은
+서로 구분되며 청구서나 예산 보장을 뜻하지 않는다.
+Execution 이력의 `reported` 사용량은 adapter가 보고한 값이며 실제 청구로 검증된
+값이 아니다. `unavailable`은 0을 뜻하지 않는다. 명시적 근거가 없는 과거 이력은
+사용량을 추정하지 않고 unavailable로 유지한다. `subscription_reference` 비용도 실제
+청구액이 아니라 구독 기준 참고값일 수 있다.
 
 Profile 2.0은 Task, Room, 역할 체계, 승인 절차, 장기기억 정책을 정의하지 않는다.
 그런 업무 의미는 Plugin이 직접 정의한다.
