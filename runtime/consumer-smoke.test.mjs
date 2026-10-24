@@ -38,12 +38,18 @@ test("an external temporary project imports the packed public runtime facade", {
     await fs.writeFile(path.join(root, "package.json"), JSON.stringify({ name: "sps-sdk-consumer-smoke", private: true, type: "module" }));
     await run("npm", ["install", "--ignore-scripts", "--no-audit", "--no-fund", tarball], root);
     await fs.writeFile(path.join(root, "smoke.ts"), [
-      'import { createSpsRuntimeClient, defineSpsRuntimeContract, type PluginSpsRun, type PluginSpsRuntime, type SpsExecution, type SpsExecutionPage, type SpsRuntimeTransport } from "@sonparkserver/plugin-sdk/runtime";',
+      'import { createSpsRuntimeClient, defineSpsRuntimeContract, type PluginSpsExecutionSummary, type PluginSpsExecutionSummaryOptions, type PluginSpsRun, type PluginSpsRuntime, type PluginSpsUsageAggregateMetric, type SpsExecution, type SpsExecutionPage, type SpsExecutionSummary, type SpsExecutionSummaryOptions, type SpsRuntimeTransport, type SpsUsageAggregateMetric } from "@sonparkserver/plugin-sdk/runtime";',
       'import type { SpsAgentSessionRunResult } from "@sonparkserver/plugin-sdk/platform";',
       'const transport: SpsRuntimeTransport = { request: async () => [] };',
       'const runtime = createSpsRuntimeClient(transport);',
       'const history: Promise<SpsExecutionPage> = runtime.executions.list("external-company", { lane: "agent_session", limit: 25, before: { createdAt: "2026-10-22T12:34:56.789Z", runId: "11111111-1111-4111-8111-111111111111", lane: "node" } });',
       'const execution: Promise<SpsExecution | null> = runtime.executions.get("external-company", "node", "22222222-2222-4222-8222-222222222222");',
+      'const summaryOptions: SpsExecutionSummaryOptions = { from: "2026-10-01T00:00:00.000Z", to: "2026-10-08T00:00:00.000Z", lane: "agent_session", agentId: "22222222-2222-4222-8222-222222222222" };',
+      'const pluginSummaryOptions: PluginSpsExecutionSummaryOptions = summaryOptions;',
+      'const summary: Promise<SpsExecutionSummary> = runtime.executions.summarize("11111111-1111-4111-8111-111111111111", summaryOptions);',
+      'declare const summaryValue: PluginSpsExecutionSummary;',
+      'const publicMetric: SpsUsageAggregateMetric = summaryValue.tokens.inputTokens;',
+      'const pluginMetric: PluginSpsUsageAggregateMetric = publicMetric;',
       'declare const observed: SpsExecution;',
       'const sessionRun: SpsAgentSessionRunResult = { runId: "run", status: "running", cancellationRequested: false, termination: "not_applicable", errorCode: null, error: null, execution: observed };',
       'const runtimes: Promise<PluginSpsRuntime[]> = runtime.runtimes.list("external-company", { nodeId: null });',
@@ -53,6 +59,9 @@ test("an external temporary project imports the packed public runtime facade", {
       'void runtimes;',
       'void history;',
       'void execution;',
+      'void pluginSummaryOptions;',
+      'void summary;',
+      'void pluginMetric;',
       'void sessionRun;',
       'void runs;',
       'void cancelled;',
@@ -69,8 +78,9 @@ test("an external temporary project imports the packed public runtime facade", {
       'const runtime = createSpsRuntimeClient({ request: async (operation, input) => { calls.push({ operation, input }); return { ok: true }; } });',
       'await runtime.runs.list("external-company", { status: "queued", limit: 5 });',
       'await runtime.runs.cancel("external-company", "run-1");',
+      'await runtime.executions.summarize("11111111-1111-4111-8111-111111111111", { from: "2026-10-01T00:00:00.000Z", to: "2026-10-02T00:00:00.000Z" });',
       'const contract = defineSpsRuntimeContract({ primitives: ["runs.observe", "runs.cancel"] });',
-      'if (calls[0].operation !== "sps.runs.list" || calls[0].input.status !== "queued" || calls[1].operation !== "sps.runs.cancel" || contract.contractVersion !== "2.0") process.exit(1);',
+      'if (calls[0].operation !== "sps.runs.list" || calls[0].input.status !== "queued" || calls[1].operation !== "sps.runs.cancel" || calls[2].operation !== "sps.executions.summarize" || contract.contractVersion !== "2.0") process.exit(1);',
     ].join("\n"));
     await run("node", ["smoke.mjs"], root);
     assert.ok(await fs.stat(path.join(root, "node_modules", "@sonparkserver", "plugin-sdk", "runtime", "index.mjs")));

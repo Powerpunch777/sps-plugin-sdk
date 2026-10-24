@@ -71,8 +71,8 @@ its own workflow meaning on top of those primitives.
 
 ## Runtime facade
 
-The `executions.list`, `executions.get`, `runs.list`, and `runs.cancel` APIs
-below are unreleased pinned-source additions; they are not present in the
+The `executions.list`, `executions.get`, `executions.summarize`, `runs.list`,
+and `runs.cancel` APIs below are unreleased pinned-source additions; they are not present in the
 published `@sonparkserver/plugin-sdk` v0.11.0 tag. Consumers need to pin an SDK
 source revision containing these additions. The runtime contract version
 remains `1.0`, but matching protocol versions do not establish Host support.
@@ -99,6 +99,17 @@ containing a canonical UTC ISO timestamp with milliseconds, UUID run ID, and
 lane. `get` returns `null` when no matching execution exists. This is history
 observation only: it does not replace either execution engine, add mutations or
 cancellation policy, or introduce a role model.
+
+`runtime.executions.summarize(companyId, { from, to, lane?, agentId? })` uses
+that same read capability and invocation-company scope. The window filters
+`createdAt` with inclusive `from` and exclusive `to`, requires canonical UTC
+timestamps with milliseconds, and may span at most 31 days. Core computes the
+summary from one database snapshot and refuses a matching set above 10,000
+executions rather than returning a partial aggregate. Usage metrics retain
+reported, estimated, and unavailable coverage separately; costs remain split
+into incremental API, subscription-reference, and other bases and must not be
+added together. These are execution-adapter evidence, not invoices; the API
+adds no billing ledger and makes no budget or billing guarantees.
 
 Usage evidence is deliberately explicit. `reported` means reported by the
 execution adapter, not independently verified billing; `unavailable` is not
@@ -131,7 +142,7 @@ can route execution.
 Plugins that need a Worker can use the public `worker` entrypoint without a
 private SPS Core checkout or a Paperclip package. It owns only a small
 newline-delimited JSON-RPC lifecycle: `initialize`, `health`, and `shutdown`.
-It exposes the same finite fourteen-operation `spsTransport` used by the Runtime
+It exposes the same finite fifteen-operation `spsTransport` used by the Runtime
 facade. Logs must go to stderr; stdout is reserved for JSON-RPC messages.
 The Host receives the Core `InitializeResult` `{ ok: true, supportedMethods }`;
 an `initialize` handler's return value is private setup data, not a protocol

@@ -11,6 +11,7 @@ export const SPS_RUNTIME_CONTRACT_VERSION = "1.0";
 export const SPS_RUNTIME_OPERATIONS = Object.freeze([
   "sps.executions.list",
   "sps.executions.get",
+  "sps.executions.summarize",
   "sps.workspaceSources.list",
   "sps.runtimes.list",
   "sps.executionGrants.list",
@@ -205,6 +206,33 @@ export function createSpsRuntimeClient(transport) {
           companyId: assertNonEmptyString(companyId, "companyId"),
           lane: assertExecutionLane(lane),
           runId: assertUuid(runId, "runId"),
+        });
+      },
+      summarize(companyId, options) {
+        const input = assertRecord(options, "options");
+        const allowedKeys = new Set(["from", "to", "lane", "agentId"]);
+        if (Object.keys(input).some((key) => !allowedKeys.has(key))) {
+          throw new TypeError("options must contain only from, to, lane, and agentId.");
+        }
+        const from = assertCanonicalUtcMillis(input.from, "from");
+        const to = assertCanonicalUtcMillis(input.to, "to");
+        const fromMs = Date.parse(from);
+        const toMs = Date.parse(to);
+        if (fromMs >= toMs) throw new TypeError("to must be later than from.");
+        if (toMs - fromMs > 31 * 24 * 60 * 60 * 1000) {
+          throw new TypeError("from and to must span no more than 31 days.");
+        }
+        const lane = input.lane === undefined ? undefined : assertExecutionLane(input.lane);
+        const agentId = input.agentId === undefined ? undefined : assertUuid(input.agentId, "agentId");
+        if (agentId !== undefined && lane === "node") {
+          throw new TypeError('agentId cannot be combined with lane "node".');
+        }
+        return request(clientTransport, "sps.executions.summarize", {
+          companyId: assertUuid(companyId, "companyId"),
+          from,
+          to,
+          lane,
+          agentId,
         });
       },
     }),

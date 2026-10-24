@@ -12,6 +12,12 @@ test("runtime facade uses the exact existing Host RPC names and payloads", async
     before: { createdAt: "2026-10-22T12:34:56.789Z", runId: "11111111-1111-4111-8111-111111111111", lane: "node" },
   });
   await client.executions.get("company-1", "node", "22222222-2222-4222-8222-222222222222");
+  await client.executions.summarize("11111111-1111-4111-8111-111111111111", {
+    from: "2026-10-01T00:00:00.000Z",
+    to: "2026-10-08T00:00:00.000Z",
+    lane: "agent_session",
+    agentId: "22222222-2222-4222-8222-222222222222",
+  });
   await client.workspaceSources.list("company-1");
   await client.runtimes.list("company-1", { nodeId: null, command: "ignored" });
   await client.executionGrants.list("company-1", { subjectKey: null, includeRevoked: false, path: "ignored" });
@@ -26,6 +32,7 @@ test("runtime facade uses the exact existing Host RPC names and payloads", async
   assert.deepEqual(calls, [
     { operation: "sps.executions.list", input: { companyId: "company-1", lane: "agent_session", limit: 25, before: { createdAt: "2026-10-22T12:34:56.789Z", runId: "11111111-1111-4111-8111-111111111111", lane: "node" } } },
     { operation: "sps.executions.get", input: { companyId: "company-1", lane: "node", runId: "22222222-2222-4222-8222-222222222222" } },
+    { operation: "sps.executions.summarize", input: { companyId: "11111111-1111-4111-8111-111111111111", from: "2026-10-01T00:00:00.000Z", to: "2026-10-08T00:00:00.000Z", lane: "agent_session", agentId: "22222222-2222-4222-8222-222222222222" } },
     { operation: "sps.workspaceSources.list", input: { companyId: "company-1" } },
     { operation: "sps.runtimes.list", input: { companyId: "company-1", nodeId: null } },
     { operation: "sps.executionGrants.list", input: { companyId: "company-1", subjectKey: null, includeRevoked: false } },
@@ -38,7 +45,7 @@ test("runtime facade uses the exact existing Host RPC names and payloads", async
     { operation: "sps.artifacts.list", input: { companyId: "company-1", subjectKey: null, runId: null, limit: null } },
   ]);
   assert.deepEqual(SPS_RUNTIME_OPERATIONS, [
-    "sps.executions.list", "sps.executions.get",
+    "sps.executions.list", "sps.executions.get", "sps.executions.summarize",
     "sps.workspaceSources.list", "sps.runtimes.list", "sps.executionGrants.list", "sps.executionGrants.upsert", "sps.executionGrants.revoke",
     "sps.runs.dispatch", "sps.runs.get", "sps.runs.list", "sps.runs.listEvents", "sps.runs.cancel", "sps.artifacts.publish", "sps.artifacts.list",
   ]);
@@ -60,6 +67,16 @@ test("malformed declared fields fail before transport while raw fields are omitt
   assert.throws(() => client.executions.list("company-1", { before: { createdAt: "2026-10-22T12:34:56.789Z", runId: "11111111-1111-4111-8111-111111111111", lane: "node", extra: true } }), /only createdAt, runId, and lane/);
   assert.throws(() => client.executions.get("company-1", "agent", "11111111-1111-4111-8111-111111111111"), /lane/);
   assert.throws(() => client.executions.get("company-1", "agent_session", "run-1"), /UUID/);
+  const summaryOptions = { from: "2026-10-01T00:00:00.000Z", to: "2026-10-02T00:00:00.000Z" };
+  assert.throws(() => client.executions.summarize("company-1", summaryOptions), /companyId.*UUID/);
+  assert.throws(() => client.executions.summarize("11111111-1111-4111-8111-111111111111", { ...summaryOptions, from: "2026-10-01T00:00:00Z" }), /canonical ISO timestamp/);
+  assert.throws(() => client.executions.summarize("11111111-1111-4111-8111-111111111111", { ...summaryOptions, from: "2026-02-30T00:00:00.000Z" }), /canonical ISO timestamp/);
+  assert.throws(() => client.executions.summarize("11111111-1111-4111-8111-111111111111", { ...summaryOptions, to: summaryOptions.from }), /later than from/);
+  assert.throws(() => client.executions.summarize("11111111-1111-4111-8111-111111111111", { from: "2026-10-01T00:00:00.000Z", to: "2026-11-01T00:00:00.001Z" }), /no more than 31 days/);
+  assert.throws(() => client.executions.summarize("11111111-1111-4111-8111-111111111111", { ...summaryOptions, lane: "other" }), /lane/);
+  assert.throws(() => client.executions.summarize("11111111-1111-4111-8111-111111111111", { ...summaryOptions, agentId: "not-a-uuid" }), /agentId.*UUID/);
+  assert.throws(() => client.executions.summarize("11111111-1111-4111-8111-111111111111", { ...summaryOptions, lane: "node", agentId: "22222222-2222-4222-8222-222222222222" }), /cannot be combined/);
+  assert.throws(() => client.executions.summarize("11111111-1111-4111-8111-111111111111", { ...summaryOptions, pluginKey: "ignored" }), /only from, to, lane, and agentId/);
   assert.throws(() => client.runtimes.list("company-1", { nodeId: 42 }), /nodeId must be a string/);
   assert.throws(() => client.executionGrants.list("company-1", { includeRevoked: "yes" }), /includeRevoked/);
   assert.throws(() => client.executionGrants.upsert({ companyId: "company-1", subjectKey: "subject-1", nodeId: "node-1", runnerProfileId: 7 }), /runnerProfileId/);
@@ -79,6 +96,23 @@ test("malformed declared fields fail before transport while raw fields are omitt
   assert.equal(transportCalls, 0);
 });
 
+test("execution summaries accept the inclusive 31-day maximum", async () => {
+  const calls = [];
+  const client = createSpsRuntimeClient({ async request(operation, input) { calls.push({ operation, input }); return {}; } });
+  await client.executions.summarize("11111111-1111-4111-8111-111111111111", {
+    from: "2026-10-01T00:00:00.000Z",
+    to: "2026-11-01T00:00:00.000Z",
+  });
+  assert.deepEqual(calls, [{
+    operation: "sps.executions.summarize",
+    input: {
+      companyId: "11111111-1111-4111-8111-111111111111",
+      from: "2026-10-01T00:00:00.000Z",
+      to: "2026-11-01T00:00:00.000Z",
+    },
+  }]);
+});
+
 test("optional runtime fields are omitted instead of crossing Worker RPC as undefined", async () => {
   const calls = [];
   const client = createSpsRuntimeClient({
@@ -92,6 +126,7 @@ test("optional runtime fields are omitted instead of crossing Worker RPC as unde
   await client.runtimes.list("company-1");
   await client.executions.list("company-1");
   await client.executions.get("company-1", "agent_session", "33333333-3333-4333-8333-333333333333");
+  await client.executions.summarize("11111111-1111-4111-8111-111111111111", { from: "2026-10-01T00:00:00.000Z", to: "2026-10-02T00:00:00.000Z" });
   await client.executionGrants.list("company-1");
   await client.executionGrants.upsert({
     companyId: "company-1",
@@ -110,6 +145,7 @@ test("optional runtime fields are omitted instead of crossing Worker RPC as unde
     { operation: "sps.runtimes.list", input: { companyId: "company-1" } },
     { operation: "sps.executions.list", input: { companyId: "company-1" } },
     { operation: "sps.executions.get", input: { companyId: "company-1", lane: "agent_session", runId: "33333333-3333-4333-8333-333333333333" } },
+    { operation: "sps.executions.summarize", input: { companyId: "11111111-1111-4111-8111-111111111111", from: "2026-10-01T00:00:00.000Z", to: "2026-10-02T00:00:00.000Z" } },
     { operation: "sps.executionGrants.list", input: { companyId: "company-1" } },
     { operation: "sps.executionGrants.upsert", input: { companyId: "company-1", subjectKey: "subject-1", nodeId: "node-1", runnerProfileId: "profile-1" } },
     { operation: "sps.runs.dispatch", input: { companyId: "company-1", executionGrantId: "grant-1", args: [] } },

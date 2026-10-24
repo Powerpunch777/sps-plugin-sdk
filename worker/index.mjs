@@ -18,7 +18,7 @@ const PLATFORM_HOST_OPERATIONS = new Set([
   "inbox.publish", "inbox.update", "inbox.withdraw",
   ...Object.keys(PLATFORM_AGENT_OPERATIONS),
 ]);
-const EXECUTION_READ_OPERATIONS = new Set(["sps.executions.list", "sps.executions.get"]);
+const EXECUTION_READ_OPERATIONS = new Set(["sps.executions.list", "sps.executions.get", "sps.executions.summarize"]);
 const JSON_RPC_VERSION = "2.0";
 const SURFACE_ID_RE = /^[a-z0-9][a-z0-9._-]*$/;
 

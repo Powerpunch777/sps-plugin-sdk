@@ -9,6 +9,9 @@
 - Preserve usage provenance: adapter-reported values are not verified bills,
   unavailable evidence is not zero, and subscription-reference costs may not be
   actual charges.
+- Add read-only execution summaries over bounded UTC createdAt windows, with
+  explicit usage coverage and separate cost bases under the existing
+  `executions.observe` capability.
 
 ## 0.11.0 - 2026-08-01
 

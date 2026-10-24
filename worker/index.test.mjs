@@ -112,6 +112,13 @@ test("execution history RPCs are finite, forwarded with exact payloads, and invo
       execution: await transport.request("sps.executions.get", {
         companyId: "company-1", lane: "node", runId: "22222222-2222-4222-8222-222222222222",
       }),
+      summary: await transport.request("sps.executions.summarize", {
+        companyId: "company-1",
+        from: "2026-10-01T00:00:00.000Z",
+        to: "2026-10-08T00:00:00.000Z",
+        lane: "agent_session",
+        agentId: "33333333-3333-4333-8333-333333333333",
+      }),
     }) }] }),
   }));
   input.write(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: {} }) + "\n");
@@ -139,7 +146,21 @@ test("execution history RPCs are finite, forwarded with exact payloads, and invo
   });
   input.write(JSON.stringify({ jsonrpc: "2.0", id: "sps-2", result: null }) + "\n");
   await eventually(() => lines.length === 4);
-  assert.deepEqual(lines[3].result, { page, execution: null });
+  assert.deepEqual(lines[3], {
+    jsonrpc: "2.0", id: "sps-3", method: "sps.executions.summarize",
+    params: {
+      companyId: "company-1",
+      from: "2026-10-01T00:00:00.000Z",
+      to: "2026-10-08T00:00:00.000Z",
+      lane: "agent_session",
+      agentId: "33333333-3333-4333-8333-333333333333",
+    },
+    paperclipInvocationId: "inv-history",
+  });
+  const summary = { executionCount: 0, tokens: {}, costs: {}, duration: {} };
+  input.write(JSON.stringify({ jsonrpc: "2.0", id: "sps-3", result: summary }) + "\n");
+  await eventually(() => lines.length === 5);
+  assert.deepEqual(lines[4].result, { page, execution: null, summary });
   input.end();
   await worker.closed;
 });
@@ -149,14 +170,15 @@ test("execution history rejects missing, malformed, and cross-company invocation
     { scope: {}, companyId: "company-1" },
     { scope: { companyId: 7 }, companyId: "company-1" },
     { scope: { companyId: "company-1" }, companyId: "company-2" },
+    { scope: { companyId: "company-1" }, companyId: "company-2", operation: "sps.executions.summarize" },
   ];
   for (const [index, scenario] of cases.entries()) {
     let transport;
     const { input, lines, worker } = createHarness(defineSpsPlugin({
       initialize({ spsTransport }) { transport = spsTransport; },
-      platform: defineSpsPlatformContract({ actions: [{ key: "history", handler: () => transport.request("sps.executions.get", {
-        companyId: scenario.companyId, lane: "node", runId: "22222222-2222-4222-8222-222222222222",
-      }) }] }),
+      platform: defineSpsPlatformContract({ actions: [{ key: "history", handler: () => scenario.operation === "sps.executions.summarize"
+        ? transport.request(scenario.operation, { companyId: scenario.companyId, from: "2026-10-01T00:00:00.000Z", to: "2026-10-02T00:00:00.000Z" })
+        : transport.request("sps.executions.get", { companyId: scenario.companyId, lane: "node", runId: "22222222-2222-4222-8222-222222222222" }) }] }),
     }));
     input.write(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: {} }) + "\n");
     await eventually(() => lines.length === 1);
@@ -167,7 +189,7 @@ test("execution history rejects missing, malformed, and cross-company invocation
     }) + "\n");
     await eventually(() => lines.length === 2);
     assert.match(lines[1].error.message, /authenticated invocation company/);
-    assert.equal(lines.some((line) => line.method === "sps.executions.get"), false);
+    assert.equal(lines.some((line) => line.method === "sps.executions.get" || line.method === "sps.executions.summarize"), false);
     input.end();
     await worker.closed;
   }

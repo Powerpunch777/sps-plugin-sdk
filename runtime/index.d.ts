@@ -1,6 +1,6 @@
 export const SPS_RUNTIME_CONTRACT_VERSION: "1.0";
 export const SPS_RUNTIME_OPERATIONS: readonly [
-  "sps.executions.list", "sps.executions.get",
+  "sps.executions.list", "sps.executions.get", "sps.executions.summarize",
   "sps.workspaceSources.list", "sps.runtimes.list", "sps.executionGrants.list",
   "sps.executionGrants.upsert", "sps.executionGrants.revoke", "sps.runs.dispatch",
   "sps.runs.get", "sps.runs.list", "sps.runs.listEvents", "sps.runs.cancel",
@@ -62,6 +62,38 @@ export interface SpsExecution {
   usage: SpsUsageEvidence;
 }
 export interface SpsExecutionPage { items: SpsExecution[]; nextCursor: SpsExecutionCursor | null; }
+export interface PluginSpsUsageAggregateMetric {
+  reported: number | null;
+  estimated: number | null;
+  reportedExecutions: number;
+  estimatedExecutions: number;
+  unavailableExecutions: number;
+  overflowed: boolean;
+}
+export interface PluginSpsExecutionSummaryOptions {
+  /** Canonical UTC millisecond timestamps; createdAt window [from, to), at most 31 days. */
+  from: string;
+  to: string;
+  lane?: SpsExecutionLane;
+  agentId?: string;
+}
+export interface PluginSpsExecutionSummary {
+  companyId: string;
+  pluginKey: string;
+  window: { from: string; to: string };
+  generatedAt: string;
+  executionCount: number;
+  terminalCount: number;
+  inFlightCount: number;
+  unknownPhaseCount: number;
+  tokens: { inputTokens: PluginSpsUsageAggregateMetric; cachedInputTokens: PluginSpsUsageAggregateMetric; outputTokens: PluginSpsUsageAggregateMetric };
+  /** Costs are adapter reports, not invoices. Never sum these three billing bases together. */
+  costs: { currency: "USD"; incrementalApi: PluginSpsUsageAggregateMetric; subscriptionReference: PluginSpsUsageAggregateMetric; other: PluginSpsUsageAggregateMetric };
+  duration: { totalMs: number | null; knownExecutions: number; unavailableExecutions: number; overflowed: boolean };
+}
+export type SpsUsageAggregateMetric = PluginSpsUsageAggregateMetric;
+export type SpsExecutionSummaryOptions = PluginSpsExecutionSummaryOptions;
+export type SpsExecutionSummary = PluginSpsExecutionSummary;
 
 export interface SpsRuntimeTransport {
   request(operation: SpsRuntimeOperation, input: Record<string, unknown>): Promise<unknown>;
@@ -76,6 +108,7 @@ export interface PluginSpsClient {
   readonly executions: {
     list(companyId: string, options?: PluginSpsExecutionListOptions): Promise<SpsExecutionPage>;
     get(companyId: string, lane: SpsExecutionLane, runId: string): Promise<SpsExecution | null>;
+    summarize(companyId: string, options: SpsExecutionSummaryOptions): Promise<SpsExecutionSummary>;
   };
   readonly workspaceSources: { list(companyId: string): Promise<PluginSpsWorkspaceSource[]> };
   readonly runtimes: { list(companyId: string, options?: { nodeId?: string | null }): Promise<PluginSpsRuntime[]> };
