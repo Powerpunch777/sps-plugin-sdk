@@ -1,5 +1,7 @@
 import { SPS_CORE_PRIMITIVES } from "../profile/extension-profile-v2.mjs";
 
+export { SPS_HOST_OPERATIONS, readSpsHostSupport } from "./host-support.mjs";
+
 /**
  * Public, workflow-neutral Runtime facade for SPS plugins.
  *

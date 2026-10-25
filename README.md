@@ -137,6 +137,11 @@ directories, Host paths, or credentials. This keeps plugin packages independent
 from private SPS Core checkouts while the Host remains the only authority that
 can route execution.
 
+`readSpsHostSupport(initializeParams)` reads an optional `spsHost` initialize
+report of registered RPC handlers. A missing or unsupported report stays
+`unknown`; this is not evidence of permission, backend availability, login, or
+readiness. Older Hosts are never inferred from their API or Host version.
+
 ## Portable Worker bootstrap
 
 Plugins that need a Worker can use the public `worker` entrypoint without a

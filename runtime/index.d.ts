@@ -7,6 +7,21 @@ export const SPS_RUNTIME_OPERATIONS: readonly [
   "sps.artifacts.publish", "sps.artifacts.list"
 ];
 
+export const SPS_HOST_OPERATIONS: readonly [
+  "agents.list", "agents.sessions.cancel", "agents.sessions.create",
+  "agents.sessions.getRun", "agents.sessions.list", "agents.sessions.sendMessage",
+  "sps.artifacts.list", "sps.artifacts.publish", "sps.executionGrants.list",
+  "sps.executionGrants.revoke", "sps.executionGrants.upsert", "sps.executions.get",
+  "sps.executions.list", "sps.executions.summarize", "sps.runs.cancel",
+  "sps.runs.dispatch", "sps.runs.get", "sps.runs.list", "sps.runs.listEvents",
+  "sps.runtimes.list", "sps.workspaceSources.list"
+];
+export type SpsHostOperation = (typeof SPS_HOST_OPERATIONS)[number];
+export type SpsHostSupport =
+  | { readonly state: "reported"; readonly contractVersion: "1.0"; readonly operations: readonly SpsHostOperation[] }
+  | { readonly state: "unknown"; readonly contractVersion: null; readonly operations: readonly SpsHostOperation[] };
+export function readSpsHostSupport(initializeParams: unknown): SpsHostSupport;
+
 export type SpsRuntimeOperation = (typeof SPS_RUNTIME_OPERATIONS)[number];
 export type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
 export type JsonObject = { [key: string]: JsonValue };

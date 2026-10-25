@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Add a bounded public Host support reader for explicitly reported RPC handlers;
+  missing or unsupported reports stay unknown and do not imply permissions or readiness.
 - Add optional read-only cached Node heartbeat/approval metadata to `PluginSpsRuntime`;
   absence stays unknown and does not prove authentication, socket activity, readiness, or an execution grant.
 - Align `PluginJobContext.companyId?: string` with Workspace-scoped Core Jobs.
