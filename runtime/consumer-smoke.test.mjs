@@ -38,7 +38,7 @@ test("an external temporary project imports the packed public runtime facade", {
     await fs.writeFile(path.join(root, "package.json"), JSON.stringify({ name: "sps-sdk-consumer-smoke", private: true, type: "module" }));
     await run("npm", ["install", "--ignore-scripts", "--no-audit", "--no-fund", tarball], root);
     await fs.writeFile(path.join(root, "smoke.ts"), [
-      'import { createSpsRuntimeClient, defineSpsRuntimeContract, type PluginSpsExecutionSummary, type PluginSpsExecutionSummaryOptions, type PluginSpsRun, type PluginSpsRuntime, type PluginSpsUsageAggregateMetric, type SpsExecution, type SpsExecutionPage, type SpsExecutionSummary, type SpsExecutionSummaryOptions, type SpsRuntimeTransport, type SpsUsageAggregateMetric } from "@sonparkserver/plugin-sdk/runtime";',
+      'import { createSpsRuntimeClient, defineSpsRuntimeContract, type PluginSpsExecutionSummary, type PluginSpsExecutionSummaryOptions, type PluginSpsRun, type PluginSpsRuntime, type PluginSpsRuntimeConnection, type PluginSpsUsageAggregateMetric, type SpsExecution, type SpsExecutionPage, type SpsExecutionSummary, type SpsExecutionSummaryOptions, type SpsRuntimeTransport, type SpsUsageAggregateMetric } from "@sonparkserver/plugin-sdk/runtime";',
       'import type { SpsAgentSessionRunResult } from "@sonparkserver/plugin-sdk/platform";',
       'const transport: SpsRuntimeTransport = { request: async () => [] };',
       'const runtime = createSpsRuntimeClient(transport);',
@@ -53,10 +53,17 @@ test("an external temporary project imports the packed public runtime facade", {
       'declare const observed: SpsExecution;',
       'const sessionRun: SpsAgentSessionRunResult = { runId: "run", status: "running", cancellationRequested: false, termination: "not_applicable", errorCode: null, error: null, execution: observed };',
       'const runtimes: Promise<PluginSpsRuntime[]> = runtime.runtimes.list("external-company", { nodeId: null });',
+      'const connection: PluginSpsRuntimeConnection = { executionOwner: "node", authorization: "execution_grant_required", state: "recently_seen", observedAt: "2026-10-25T12:00:00.000Z" };',
+      'const runtimeFields: Omit<PluginSpsRuntime, "connection"> = { id: "runtime-1", nodeId: "node-1", nodeLabel: "Node 1", kind: "node", runnerKey: "runner", label: "Runner", profileLabel: null, credentialStatus: "unknown", availabilityStatus: "unknown", availabilityDetail: null, availabilityObservedAt: null, retryAfter: null, online: false };',
+      'const runtimeWithConnection: PluginSpsRuntime = { ...runtimeFields, connection };',
+      'const legacyRuntime: PluginSpsRuntime = { ...runtimeFields };',
       'const runs: Promise<PluginSpsRun[]> = runtime.runs.list("external-company", { subjectKey: null, status: "running", limit: 10, beforeId: null });',
       'const cancelled: Promise<PluginSpsRun> = runtime.runs.cancel("external-company", "run-1");',
       'const contract = defineSpsRuntimeContract({ primitives: ["runtimes.list", "runtimes.dispatch", "runs.observe", "runs.cancel"] });',
       'void runtimes;',
+      'void connection;',
+      'void runtimeWithConnection;',
+      'void legacyRuntime;',
       'void history;',
       'void execution;',
       'void pluginSummaryOptions;',

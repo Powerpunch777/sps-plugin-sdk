@@ -22,7 +22,30 @@ export type SpsCorePrimitive =
   | "secrets.use";
 
 export interface PluginSpsWorkspaceSource { id: string; displayName: string; status: string; routeStatus: "configured" | "not_configured"; createdAt: string; updatedAt: string; }
-export interface PluginSpsRuntime { id: string; nodeId: string; nodeLabel: string; kind: string; runnerKey: string; label: string; profileLabel: string | null; credentialStatus: string; availabilityStatus: string; availabilityDetail: string | null; availabilityObservedAt: string | null; retryAfter: string | null; online: boolean; }
+/** Read-only cached Node heartbeat/approval metadata; this is not proof of authentication, an active socket, runner readiness, or an execution grant. */
+export interface PluginSpsRuntimeConnection {
+  executionOwner: "node";
+  authorization: "execution_grant_required";
+  state: "inactive" | "unverified" | "recently_seen" | "offline" | "unknown";
+  observedAt: string | null;
+}
+export interface PluginSpsRuntime {
+  id: string;
+  nodeId: string;
+  nodeLabel: string;
+  kind: string;
+  runnerKey: string;
+  label: string;
+  profileLabel: string | null;
+  credentialStatus: string;
+  availabilityStatus: string;
+  availabilityDetail: string | null;
+  availabilityObservedAt: string | null;
+  retryAfter: string | null;
+  online: boolean;
+  /** Older Hosts may omit this cached metadata; absence is unknown. */
+  connection?: PluginSpsRuntimeConnection;
+}
 export interface PluginSpsExecutionGrant { id: string; companyId: string; pluginKey: string; subjectKey: string; nodeId: string; runnerProfileId: string; workspaceSourceId: string | null; status: string; revokedAt: string | null; createdAt: string; updatedAt: string; }
 export interface PluginSpsRun { id: string; companyId: string; pluginKey: string; subjectKey: string; executionGrantId: string; nodeId: string; runnerProfileId: string; workspaceSourceId: string | null; status: string; exitCode: number | null; signal: string | null; timedOut: boolean; error: string | null; claimedAt: string | null; startedAt: string | null; finishedAt: string | null; createdAt: string; updatedAt: string; }
 export interface PluginSpsRunEvent { sequence: number; stream: string; body: string; createdAt: string; }
