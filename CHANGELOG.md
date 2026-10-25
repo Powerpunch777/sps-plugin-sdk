@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Align `PluginJobContext.companyId?: string` with Workspace-scoped Core Jobs.
+  Legacy Host Jobs still omit this field; no runtime or package version change.
 - Add read-only, company-scoped execution history across Node and Agent Session
   lanes through the finite Runtime and Worker transports.
 - Add Profile v2 `executions.observe` and its `sps.executions.read` capability

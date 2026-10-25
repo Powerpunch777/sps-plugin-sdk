@@ -55,7 +55,14 @@ export interface DataRegistration { key: string; handler(params: JsonObject, pla
 export interface ActionRegistration { key: string; handler(params: JsonObject, context: SpsActionContext): JsonValue | Promise<JsonValue>; }
 export interface ToolRunContext { agentId: string; runId: string; companyId: string; projectId: string; }
 export interface ToolResult { content?: string; data?: JsonValue; error?: string; }
-export interface PluginJobContext { jobKey: string; runId: string; trigger: "schedule" | "manual" | "retry"; scheduledAt: string; }
+export interface PluginJobContext {
+  jobKey: string;
+  runId: string;
+  trigger: "schedule" | "manual" | "retry";
+  scheduledAt: string;
+  /** Absent for Host-scoped jobs. */
+  companyId?: string;
+}
 export interface SpsPlatformEvent { eventId: string; eventType: string; occurredAt: string; actorId?: string; actorType?: "user" | "agent" | "system" | "plugin"; entityId?: string; entityType?: string; companyId: string; payload: JsonValue; }
 export interface EventFilter { projectId?: string; companyId?: string; agentId?: string; [key: string]: JsonValue | undefined; }
 export type ToolHandler = (params: JsonValue, runContext: ToolRunContext, platform: SpsPlatformInvocationContext) => ToolResult | Promise<ToolResult>;
