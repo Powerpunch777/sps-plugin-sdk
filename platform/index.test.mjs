@@ -65,6 +65,12 @@ test("declares the separate model-request capabilities without adding Core primi
   assert.deepEqual(defineSpsPlatformContract({ capabilities }).capabilities, capabilities);
 });
 
+test("declares common execution reads alongside model requests in a portable Worker", () => {
+  const capabilities = ["sps.models.read", "sps.models.submit", "sps.models.cancel", "sps.executions.read"];
+  assert.deepEqual(defineSpsPlatformContract({ capabilities }).capabilities, capabilities);
+  assert.deepEqual(defineSpsPlatformContract({ capabilities: ["sps.executions.read"] }).capabilities, ["sps.executions.read"]);
+});
+
 test("accepts only finite, acyclic plain JSON payloads", () => {
   assert.equal(isJsonValue({ values: [null, false, 0, "ok"] }), true);
   assert.deepEqual(assertJsonValue({ ok: true }), { ok: true });

@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Permit the existing `sps.executions.read` capability in portable platform
+  declarations, including model-request Workers that also read common history.
+
 - Add the mock-first public `models.*` Runtime facade and finite Worker RPC
   names with exact per-operation model capabilities, UUID/text/key validation,
   and authenticated invocation-company enforcement. This is an unreleased Core
