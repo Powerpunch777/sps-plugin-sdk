@@ -42,6 +42,7 @@ export interface PluginSpsRuntime {
   availabilityDetail: string | null;
   availabilityObservedAt: string | null;
   retryAfter: string | null;
+  /** Legacy cached heartbeat liveness only, never approval or execution readiness. */
   online: boolean;
   /** Older Hosts may omit this cached metadata; absence is unknown. */
   connection?: PluginSpsRuntimeConnection;
