@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Add the mock-first public `models.*` Runtime facade and finite Worker RPC
+  names with exact per-operation model capabilities, UUID/text/key validation,
+  and authenticated invocation-company enforcement. This is an unreleased Core
+  dependency; it does not claim provider, backend, cancellation, or pricing support.
+- Add the `model_request` execution-history lane without changing the Profile
+  v2 primitive matrix.
 - Add `agents.describeExecution` through the public Worker bridge with a
   company-scoped cached configuration/Node-observation descriptor; it does not
   report permission, login, live readiness, backend availability, or cancel support.

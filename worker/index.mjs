@@ -14,6 +14,12 @@ const PLATFORM_AGENT_OPERATIONS = Object.freeze({
   "agents.sessions.getRun": "agent.sessions.read",
   "agents.sessions.cancel": "agent.sessions.cancel",
 });
+const MODEL_OPERATION_CAPABILITIES = Object.freeze({
+  "sps.models.list": "sps.models.read",
+  "sps.models.submit": "sps.models.submit",
+  "sps.models.get": "sps.models.read",
+  "sps.models.cancel": "sps.models.cancel",
+});
 const PLATFORM_HOST_OPERATIONS = new Set([
   "state.get", "state.set", "state.delete", "events.emit", "events.subscribe",
   "inbox.publish", "inbox.update", "inbox.withdraw",
@@ -22,9 +28,66 @@ const PLATFORM_HOST_OPERATIONS = new Set([
 const EXECUTION_READ_OPERATIONS = new Set(["sps.executions.list", "sps.executions.get", "sps.executions.summarize"]);
 const JSON_RPC_VERSION = "2.0";
 const SURFACE_ID_RE = /^[a-z0-9][a-z0-9._-]*$/;
+const MODEL_UUID_RE = /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i;
+const MODEL_REQUEST_KEY_RE = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
+const MODEL_INPUT_MAX_BYTES = 65_536;
 
 function isRecord(value) {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function exactPlainDataRecord(value, label, allowedKeys) {
+  if (!isRecord(value)) throw new TypeError(`${label} must be a plain object.`);
+  const prototype = Object.getPrototypeOf(value);
+  if (prototype !== Object.prototype && prototype !== null) throw new TypeError(`${label} must be a plain object.`);
+  const keys = Reflect.ownKeys(value);
+  const allowed = new Set(allowedKeys);
+  if (keys.length !== allowed.size || keys.some((key) => typeof key !== "string" || !allowed.has(key))) {
+    throw new TypeError(`${label} must contain only ${allowedKeys.join(", ")}.`);
+  }
+  const result = Object.create(null);
+  for (const key of keys) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    if (!descriptor?.enumerable || !("value" in descriptor)) {
+      throw new TypeError(`${label}.${key} must be an enumerable own data property.`);
+    }
+    result[key] = descriptor.value;
+  }
+  return result;
+}
+
+function normalizeModelUuid(value, label) {
+  if (typeof value !== "string" || value.length !== 36 || !MODEL_UUID_RE.test(value)) throw new TypeError(`${label} must be a UUID.`);
+  return value.toLowerCase();
+}
+
+function normalizeModelRequest(operation, value) {
+  if (operation === "sps.models.list") {
+    const input = exactPlainDataRecord(value, "model list input", ["companyId"]);
+    return { companyId: normalizeModelUuid(input.companyId, "companyId") };
+  }
+  if (operation === "sps.models.submit") {
+    const input = exactPlainDataRecord(value, "model request input", ["companyId", "connectionId", "requestKey", "input"]);
+    const requestText = input.input;
+    if (typeof requestText !== "string" || requestText.trim().length === 0 || requestText.length > MODEL_INPUT_MAX_BYTES ||
+      new TextEncoder().encode(requestText).byteLength > MODEL_INPUT_MAX_BYTES) {
+      throw new TypeError("input must be a non-empty string of at most 65536 UTF-8 bytes.");
+    }
+    if (typeof input.requestKey !== "string" || input.requestKey.length > 128 || /[\r\n\u2028\u2029]/.test(input.requestKey) || !MODEL_REQUEST_KEY_RE.test(input.requestKey)) {
+      throw new TypeError("requestKey must match /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.");
+    }
+    return {
+      companyId: normalizeModelUuid(input.companyId, "companyId"),
+      connectionId: normalizeModelUuid(input.connectionId, "connectionId"),
+      requestKey: input.requestKey,
+      input: requestText,
+    };
+  }
+  const input = exactPlainDataRecord(value, "model run input", ["companyId", "runId"]);
+  return {
+    companyId: normalizeModelUuid(input.companyId, "companyId"),
+    runId: normalizeModelUuid(input.runId, "runId"),
+  };
 }
 
 function isJsonValue(value, ancestors = new Set()) {
@@ -155,6 +218,42 @@ export function runSpsWorker(plugin, options = {}) {
     request(operation, inputValue) {
       if (!RUNTIME_OPERATION_SET.has(operation)) {
         return Promise.reject(new TypeError(`Unsupported SPS Runtime operation: ${String(operation)}.`));
+      }
+      const modelCapability = MODEL_OPERATION_CAPABILITIES[operation];
+      if (modelCapability) {
+        if (!definition.handlers.platform?.capabilities.includes(modelCapability)) {
+          return Promise.reject(new Error(`Undeclared SPS Platform capability: ${modelCapability}.`));
+        }
+        if (lifecycleState !== "ready") {
+          return Promise.reject(new Error("SPS model access requires an authenticated invocation company."));
+        }
+        const invocation = invocationStorage.getStore();
+        if (!invocation || typeof invocation.scope?.companyId !== "string") {
+          return Promise.reject(new Error("SPS model access must match the authenticated invocation company."));
+        }
+        let normalizedInput;
+        let invocationCompanyId;
+        try {
+          normalizedInput = normalizeModelRequest(operation, inputValue);
+          invocationCompanyId = normalizeModelUuid(invocation.scope.companyId, "authenticated invocation company");
+        } catch (cause) {
+          return Promise.reject(cause);
+        }
+        const tenant = agentTenantStorage.getStore();
+        let tenantCompanyId = invocationCompanyId;
+        try {
+          if (typeof tenant?.companyId === "string") tenantCompanyId = normalizeModelUuid(tenant.companyId, "invocation tenant company");
+          if (typeof tenant?.invocationCompanyId === "string" &&
+            normalizeModelUuid(tenant.invocationCompanyId, "authenticated invocation company") !== invocationCompanyId) {
+            return Promise.reject(new Error("SPS model access must match the authenticated invocation company."));
+          }
+        } catch (cause) {
+          return Promise.reject(cause);
+        }
+        if (normalizedInput.companyId !== invocationCompanyId || tenantCompanyId !== invocationCompanyId) {
+          return Promise.reject(new Error("SPS model access must match the authenticated invocation company."));
+        }
+        return callHost(operation, normalizedInput);
       }
       if (EXECUTION_READ_OPERATIONS.has(operation)) {
         const requestedCompanyId = isRecord(inputValue) ? inputValue.companyId : undefined;

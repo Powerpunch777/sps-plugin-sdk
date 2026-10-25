@@ -71,8 +71,8 @@ its own workflow meaning on top of those primitives.
 
 ## Runtime facade
 
-The `executions.list`, `executions.get`, `executions.summarize`, `runs.list`,
-`runs.cancel`, and `agents.describeExecution` APIs below are unreleased
+The `executions.list`, `executions.get`, `executions.summarize`, `models.*`,
+`runs.list`, `runs.cancel`, and `agents.describeExecution` APIs below are unreleased
 pinned-source additions; they are not present in the published
 `@sonparkserver/plugin-sdk` v0.11.0 tag. Consumers need to pin an SDK source
 revision containing these additions. The runtime contract version remains
@@ -92,7 +92,7 @@ const declaration = defineSpsRuntimeContract({
 
 `runtime.executions.list(companyId, options)` and
 `runtime.executions.get(companyId, lane, runId)` expose read-only, own-plugin
-history across the `node` and `agent_session` lanes. They require the
+history across the `node`, `agent_session`, and `model_request` lanes. They require the
 `executions.observe` primitive, which maps to `sps.executions.read`, and the
 Worker rejects reads without a matching authenticated invocation company.
 Listing accepts an optional lane, a limit from 1 through 100, and a cursor
@@ -111,6 +111,29 @@ reported, estimated, and unavailable coverage separately; costs remain split
 into incremental API, subscription-reference, and other bases and must not be
 added together. These are execution-adapter evidence, not invoices; the API
 adds no billing ledger and makes no budget or billing guarantees.
+
+`runtime.models.list(companyId)`, `submit({ companyId, connectionId, requestKey,
+input })`, `get(companyId, runId)`, and `cancel(companyId, runId)` expose the
+mock-first public model-request contract through the exact `sps.models.*`
+Worker RPC names. They require the corresponding `sps.models.read`,
+`sps.models.submit`, or `sps.models.cancel` capability and an authenticated
+invocation company. Identifiers are UUIDs; submit accepts only bounded text
+input and an idempotency request key, never provider endpoints, model overrides,
+credentials, or tools. Declare these capabilities with
+`defineSpsPlatformContract`; this adds no Profile v2 Core primitive. `submit` returns the persisted run request, typically
+queued, and does not wait for model completion. The SDK types describe the
+connection and run DTOs but do not establish support in the current SPS Core
+backend. This addition makes no claim of real-provider execution, cancellation
+outcomes, pricing, or billing evidence; no `secrets.resolve` capability is
+enabled by it. Keep the Core dependency pinned to a revision that explicitly
+implements these operations before relying on them.
+
+For the `model_request` history lane, `runtime.modelSource: "configured"` means
+the model selected by the Host connection, not a model independently reported
+by the provider. The Host owns the HTTP transport (`executionOwner: "host"`);
+inference may still run remotely. A cancelled local request never proves that
+provider work or billing stopped. Current grants and Secret versions may cause
+an older result to be `withheld`, including after a revoke/reapproval cycle.
 
 Usage evidence is deliberately explicit. `reported` means reported by the
 execution adapter, not independently verified billing; `unavailable` is not
@@ -155,7 +178,7 @@ availability, or cancellation support; authorization is rechecked on dispatch.
 Plugins that need a Worker can use the public `worker` entrypoint without a
 private SPS Core checkout or a Paperclip package. It owns only a small
 newline-delimited JSON-RPC lifecycle: `initialize`, `health`, and `shutdown`.
-It exposes the same finite fifteen-operation `spsTransport` used by the Runtime
+It exposes the same finite nineteen-operation `spsTransport` used by the Runtime
 facade. Logs must go to stderr; stdout is reserved for JSON-RPC messages.
 The Host receives the Core `InitializeResult` `{ ok: true, supportedMethods }`;
 an `initialize` handler's return value is private setup data, not a protocol

@@ -7,6 +7,7 @@ import {
   defineSpsPlatformContract,
   isJsonValue,
 } from "./index.mjs";
+import { SPS_CORE_PRIMITIVES } from "../profile/extension-profile-v2.mjs";
 
 test("declares the Core-mapped tool, event, job, data, and state surface", () => {
   const tool = async () => ({ content: "ok", data: { ok: true } });
@@ -55,6 +56,13 @@ test("declares bounded agent-session run read and cancellation capabilities", ()
   assert.ok(SPS_PLATFORM_CAPABILITIES.includes("agent.sessions.cancel"));
   const contract = defineSpsPlatformContract({ capabilities: ["agent.sessions.read", "agent.sessions.cancel"] });
   assert.deepEqual(contract.capabilities, ["agent.sessions.read", "agent.sessions.cancel"]);
+});
+
+test("declares the separate model-request capabilities without adding Core primitives", () => {
+  const capabilities = ["sps.models.read", "sps.models.submit", "sps.models.cancel"];
+  assert.ok(capabilities.every((capability) => SPS_PLATFORM_CAPABILITIES.includes(capability)));
+  assert.ok(capabilities.every((capability) => !SPS_CORE_PRIMITIVES.includes(capability)));
+  assert.deepEqual(defineSpsPlatformContract({ capabilities }).capabilities, capabilities);
 });
 
 test("accepts only finite, acyclic plain JSON payloads", () => {

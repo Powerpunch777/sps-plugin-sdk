@@ -205,6 +205,158 @@ test("Agent session run methods enforce their dedicated capabilities and invocat
   }
 });
 
+test("model request RPCs use exact payloads and the declared operation-specific capabilities", async () => {
+  const companyId = "11111111-1111-4111-8111-111111111111";
+  const connectionId = "22222222-2222-4222-8222-222222222222";
+  const runId = "33333333-3333-4333-8333-333333333333";
+  const calls = [
+    { operation: "sps.models.list", capability: "sps.models.read", input: { companyId } },
+    { operation: "sps.models.submit", capability: "sps.models.submit", input: { companyId, connectionId, requestKey: "worker:request-1", input: "Summarize this." } },
+    { operation: "sps.models.get", capability: "sps.models.read", input: { companyId, runId } },
+    { operation: "sps.models.cancel", capability: "sps.models.cancel", input: { companyId, runId } },
+  ];
+  let transport;
+  const { input, lines, worker } = createHarness(defineSpsPlugin({
+    initialize({ spsTransport }) { transport = spsTransport; },
+    platform: defineSpsPlatformContract({
+      capabilities: ["sps.models.read", "sps.models.submit", "sps.models.cancel"],
+      actions: [{ key: "models", handler: async () => {
+        const results = [];
+        for (const call of calls) results.push(await transport.request(call.operation, call.input));
+        return results;
+      } }],
+    }),
+  }));
+  input.write(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: {} }) + "\n");
+  await eventually(() => lines.length === 1);
+  input.write(JSON.stringify({
+    jsonrpc: "2.0", id: 2, method: "performAction",
+    paperclipInvocation: { id: "inv-models", scope: { companyId } },
+    params: { key: "models", companyId, params: {}, actorContext: { type: "user", companyId } },
+  }) + "\n");
+  for (let index = 0; index < calls.length; index += 1) {
+    await eventually(() => lines.length === index + 2);
+    assert.deepEqual(lines[index + 1], {
+      jsonrpc: "2.0",
+      id: `sps-${index + 1}`,
+      method: calls[index].operation,
+      params: calls[index].input,
+      paperclipInvocationId: "inv-models",
+    });
+    input.write(JSON.stringify({ jsonrpc: "2.0", id: `sps-${index + 1}`, result: index }) + "\n");
+  }
+  await eventually(() => lines.length === calls.length + 2);
+  assert.deepEqual(lines.at(-1).result, [0, 1, 2, 3]);
+  input.end();
+  await worker.closed;
+});
+
+test("each model RPC requires its exact capability and matching invocation scope", async () => {
+  const companyId = "11111111-1111-4111-8111-111111111111";
+  const foreignCompanyId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+  const operations = [
+    { operation: "sps.models.list", capability: "sps.models.read", input: { companyId } },
+    { operation: "sps.models.submit", capability: "sps.models.submit", input: { companyId, connectionId: "22222222-2222-4222-8222-222222222222", requestKey: "worker:request-1", input: "hello" } },
+    { operation: "sps.models.get", capability: "sps.models.read", input: { companyId, runId: "33333333-3333-4333-8333-333333333333" } },
+    { operation: "sps.models.cancel", capability: "sps.models.cancel", input: { companyId, runId: "33333333-3333-4333-8333-333333333333" } },
+  ];
+  for (const call of operations) {
+    for (const scenario of ["capability", "missing_scope", "foreign_scope", "mismatched_context"]) {
+      let transport;
+      const capabilities = ["sps.models.read", "sps.models.submit", "sps.models.cancel"]
+        .filter((capability) => scenario !== "capability" || capability !== call.capability);
+      const { input, lines, worker } = createHarness(defineSpsPlugin({
+        initialize({ spsTransport }) { transport = spsTransport; },
+        platform: defineSpsPlatformContract({
+          capabilities,
+          actions: [{ key: "invoke", handler: () => transport.request(call.operation, call.input) }],
+        }),
+      }));
+      input.write(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: {} }) + "\n");
+      await eventually(() => lines.length === 1);
+      input.write(JSON.stringify({
+        jsonrpc: "2.0", id: 2, method: "performAction",
+        ...(scenario === "missing_scope" ? {} : { paperclipInvocation: { id: `inv-${call.operation}-${scenario}`, scope: { companyId: scenario === "foreign_scope" ? foreignCompanyId : companyId } } }),
+        params: {
+          key: "invoke",
+          companyId: scenario === "mismatched_context" ? foreignCompanyId : companyId,
+          params: {},
+          actorContext: { type: "user", companyId: scenario === "mismatched_context" ? foreignCompanyId : companyId },
+        },
+      }) + "\n");
+      await eventually(() => lines.length === 2);
+      assert.ok(lines[1].error, `${call.operation} ${scenario} should be denied`);
+      assert.match(lines[1].error.message, scenario === "capability" ? /Undeclared.*sps\.models\./ : /authenticated invocation company/);
+      assert.equal(lines.some((line) => line.method === call.operation), false);
+      input.end();
+      await worker.closed;
+    }
+  }
+});
+
+test("model requests cannot be issued during initialize or without an invocation context", async () => {
+  const companyId = "11111111-1111-4111-8111-111111111111";
+  let initializeError;
+  let transport;
+  const { input, lines, worker } = createHarness(defineSpsPlugin({
+    async initialize(context) {
+      transport = context.spsTransport;
+      try {
+        await transport.request("sps.models.list", { companyId });
+      } catch (cause) {
+        initializeError = cause;
+      }
+    },
+    platform: defineSpsPlatformContract({ capabilities: ["sps.models.read"] }),
+  }));
+  input.write(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: {} }) + "\n");
+  await eventually(() => lines.length === 1);
+  assert.match(initializeError.message, /authenticated invocation company/);
+  await assert.rejects(transport.request("sps.models.list", { companyId }), /authenticated invocation company/);
+  assert.equal(lines.some((line) => line.method === "sps.models.list"), false);
+  input.end();
+  await worker.closed;
+});
+
+test("model Worker rejects credential, endpoint, and accessor fields before Host RPC", async () => {
+  const companyId = "11111111-1111-4111-8111-111111111111";
+  const connectionId = "22222222-2222-4222-8222-222222222222";
+  let transport;
+  const { input, lines, worker } = createHarness(defineSpsPlugin({
+    initialize({ spsTransport }) { transport = spsTransport; },
+    platform: defineSpsPlatformContract({
+      capabilities: ["sps.models.submit"],
+      actions: [{ key: "submit", handler: async () => {
+        const invalid = { companyId, connectionId, requestKey: "worker:request-1", input: "hello", endpoint: "https://example.invalid", apiKey: "secret" };
+        let extraFields;
+        try { await transport.request("sps.models.submit", invalid); }
+        catch (cause) { extraFields = cause.message; }
+        let getterCalls = 0;
+        const accessor = { companyId, connectionId, requestKey: "worker:request-1" };
+        Object.defineProperty(accessor, "input", { enumerable: true, get() { getterCalls += 1; return "hello"; } });
+        let accessorField;
+        try { await transport.request("sps.models.submit", accessor); }
+        catch (cause) { accessorField = cause.message; }
+        return { extraFields, accessorField, getterCalls };
+      } }],
+    }),
+  }));
+  input.write(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: {} }) + "\n");
+  await eventually(() => lines.length === 1);
+  input.write(JSON.stringify({
+    jsonrpc: "2.0", id: 2, method: "performAction",
+    paperclipInvocation: { id: "inv-model-submit", scope: { companyId } },
+    params: { key: "submit", companyId, params: {}, actorContext: { type: "user", companyId } },
+  }) + "\n");
+  await eventually(() => lines.length === 2);
+  assert.match(lines[1].result.extraFields, /only companyId, connectionId, requestKey, input/);
+  assert.match(lines[1].result.accessorField, /own data property/);
+  assert.equal(lines[1].result.getterCalls, 0);
+  assert.equal(lines.some((line) => line.method === "sps.models.submit"), false);
+  input.end();
+  await worker.closed;
+});
+
 test("execution history RPCs are finite, forwarded with exact payloads, and invocation-company scoped", async () => {
   let transport;
   const page = { items: [], nextCursor: null };

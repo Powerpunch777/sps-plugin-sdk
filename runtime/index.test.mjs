@@ -18,6 +18,15 @@ test("runtime facade uses the exact existing Host RPC names and payloads", async
     lane: "agent_session",
     agentId: "22222222-2222-4222-8222-222222222222",
   });
+  await client.models.list("AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA");
+  await client.models.submit({
+    companyId: "AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA",
+    connectionId: "BBBBBBBB-BBBB-4BBB-8BBB-BBBBBBBBBBBB",
+    requestKey: "job:build-42",
+    input: "Summarize this build.",
+  });
+  await client.models.get("AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA", "CCCCCCCC-CCCC-4CCC-8CCC-CCCCCCCCCCCC");
+  await client.models.cancel("AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA", "CCCCCCCC-CCCC-4CCC-8CCC-CCCCCCCCCCCC");
   await client.workspaceSources.list("company-1");
   await client.runtimes.list("company-1", { nodeId: null, command: "ignored" });
   await client.executionGrants.list("company-1", { subjectKey: null, includeRevoked: false, path: "ignored" });
@@ -33,6 +42,10 @@ test("runtime facade uses the exact existing Host RPC names and payloads", async
     { operation: "sps.executions.list", input: { companyId: "company-1", lane: "agent_session", limit: 25, before: { createdAt: "2026-10-22T12:34:56.789Z", runId: "11111111-1111-4111-8111-111111111111", lane: "node" } } },
     { operation: "sps.executions.get", input: { companyId: "company-1", lane: "node", runId: "22222222-2222-4222-8222-222222222222" } },
     { operation: "sps.executions.summarize", input: { companyId: "11111111-1111-4111-8111-111111111111", from: "2026-10-01T00:00:00.000Z", to: "2026-10-08T00:00:00.000Z", lane: "agent_session", agentId: "22222222-2222-4222-8222-222222222222" } },
+    { operation: "sps.models.list", input: { companyId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa" } },
+    { operation: "sps.models.submit", input: { companyId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", connectionId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", requestKey: "job:build-42", input: "Summarize this build." } },
+    { operation: "sps.models.get", input: { companyId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", runId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc" } },
+    { operation: "sps.models.cancel", input: { companyId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", runId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc" } },
     { operation: "sps.workspaceSources.list", input: { companyId: "company-1" } },
     { operation: "sps.runtimes.list", input: { companyId: "company-1", nodeId: null } },
     { operation: "sps.executionGrants.list", input: { companyId: "company-1", subjectKey: null, includeRevoked: false } },
@@ -46,6 +59,7 @@ test("runtime facade uses the exact existing Host RPC names and payloads", async
   ]);
   assert.deepEqual(SPS_RUNTIME_OPERATIONS, [
     "sps.executions.list", "sps.executions.get", "sps.executions.summarize",
+    "sps.models.list", "sps.models.submit", "sps.models.get", "sps.models.cancel",
     "sps.workspaceSources.list", "sps.runtimes.list", "sps.executionGrants.list", "sps.executionGrants.upsert", "sps.executionGrants.revoke",
     "sps.runs.dispatch", "sps.runs.get", "sps.runs.list", "sps.runs.listEvents", "sps.runs.cancel", "sps.artifacts.publish", "sps.artifacts.list",
   ]);
@@ -79,6 +93,30 @@ test("malformed declared fields fail before transport while raw fields are omitt
   assert.throws(() => client.executions.summarize("11111111-1111-4111-8111-111111111111", { ...summaryOptions, pluginKey: "ignored" }), /only from, to, lane, and agentId/);
   assert.throws(() => client.runtimes.list("company-1", { nodeId: 42 }), /nodeId must be a string/);
   assert.throws(() => client.executionGrants.list("company-1", { includeRevoked: "yes" }), /includeRevoked/);
+  assert.throws(() => client.models.list("company-1"), /companyId.*UUID/);
+  assert.throws(() => client.models.list("11111111-1111-4111-8111-111111111111\n"), /companyId.*UUID/);
+  assert.throws(() => client.models.submit({ companyId: "company-1", connectionId: "22222222-2222-4222-8222-222222222222", requestKey: "ok", input: "hello" }), /companyId.*UUID/);
+  assert.throws(() => client.models.submit({ companyId: "11111111-1111-4111-8111-111111111111", connectionId: "connection", requestKey: "ok", input: "hello" }), /connectionId.*UUID/);
+  assert.throws(() => client.models.get("11111111-1111-4111-8111-111111111111", "run"), /runId.*UUID/);
+  assert.throws(() => client.models.cancel("11111111-1111-4111-8111-111111111111", "run"), /runId.*UUID/);
+  for (const requestKey of ["", "_bad", "-bad", " bad", "x".repeat(129), "é", "A\n", "A\u2028"] ) {
+    assert.throws(() => client.models.submit({ companyId: "11111111-1111-4111-8111-111111111111", connectionId: "22222222-2222-4222-8222-222222222222", requestKey, input: "hello" }), /requestKey/);
+  }
+  for (const input of ["", "   ", "x".repeat(65_537), "😀".repeat(16_385)]) {
+    assert.throws(() => client.models.submit({ companyId: "11111111-1111-4111-8111-111111111111", connectionId: "22222222-2222-4222-8222-222222222222", requestKey: "ok", input }), /input/);
+  }
+  for (const extra of ["endpoint", "model", "key", "tools", "apiKey"]) {
+    assert.throws(() => client.models.submit({ companyId: "11111111-1111-4111-8111-111111111111", connectionId: "22222222-2222-4222-8222-222222222222", requestKey: "ok", input: "hello", [extra]: "forbidden" }), /only companyId, connectionId, requestKey, input/);
+  }
+  let modelGetterCalls = 0;
+  const accessorInput = { companyId: "11111111-1111-4111-8111-111111111111", connectionId: "22222222-2222-4222-8222-222222222222", requestKey: "ok" };
+  Object.defineProperty(accessorInput, "input", { enumerable: true, get() { modelGetterCalls += 1; return "hello"; } });
+  assert.throws(() => client.models.submit(accessorInput), /own data property/);
+  const symbolInput = { companyId: "11111111-1111-4111-8111-111111111111", connectionId: "22222222-2222-4222-8222-222222222222", requestKey: "ok", input: "hello", [Symbol("extra")]: true };
+  assert.throws(() => client.models.submit(symbolInput), /only companyId, connectionId, requestKey, input/);
+  const customPrototypeInput = Object.assign(Object.create({ inherited: true }), { companyId: "11111111-1111-4111-8111-111111111111", connectionId: "22222222-2222-4222-8222-222222222222", requestKey: "ok", input: "hello" });
+  assert.throws(() => client.models.submit(customPrototypeInput), /plain object/);
+  assert.equal(modelGetterCalls, 0);
   assert.throws(() => client.executionGrants.upsert({ companyId: "company-1", subjectKey: "subject-1", nodeId: "node-1", runnerProfileId: 7 }), /runnerProfileId/);
   assert.throws(() => client.runs.dispatch({ companyId: "company-1", executionGrantId: "grant-1", args: ["ok", 7] }), /args/);
   assert.throws(() => client.runs.dispatch({ companyId: "company-1", executionGrantId: "grant-1", args: [], env: { BAD: 7 } }), /env/);
@@ -96,6 +134,20 @@ test("malformed declared fields fail before transport while raw fields are omitt
   assert.equal(transportCalls, 0);
 });
 
+test("model request input accepts the full bounded UTF-8 payload", async () => {
+  let forwarded;
+  const client = createSpsRuntimeClient({ async request(operation, input) { forwarded = { operation, input }; return {}; } });
+  const input = "😀".repeat(16_384);
+  await client.models.submit({
+    companyId: "11111111-1111-4111-8111-111111111111",
+    connectionId: "22222222-2222-4222-8222-222222222222",
+    requestKey: `A${"b".repeat(127)}`,
+    input,
+  });
+  assert.equal(forwarded.operation, "sps.models.submit");
+  assert.equal(forwarded.input.input, input);
+});
+
 test("execution summaries accept the inclusive 31-day maximum", async () => {
   const calls = [];
   const client = createSpsRuntimeClient({ async request(operation, input) { calls.push({ operation, input }); return {}; } });
@@ -111,6 +163,19 @@ test("execution summaries accept the inclusive 31-day maximum", async () => {
       to: "2026-11-01T00:00:00.000Z",
     },
   }]);
+});
+
+test("model request history is a supported execution lane", async () => {
+  const calls = [];
+  const client = createSpsRuntimeClient({ async request(operation, input) { calls.push({ operation, input }); return {}; } });
+  await client.executions.list("company-1", { lane: "model_request" });
+  await client.executions.get("company-1", "model_request", "11111111-1111-4111-8111-111111111111");
+  await client.executions.summarize("11111111-1111-4111-8111-111111111111", {
+    from: "2026-10-01T00:00:00.000Z",
+    to: "2026-10-02T00:00:00.000Z",
+    lane: "model_request",
+  });
+  assert.deepEqual(calls.map(({ input }) => input.lane), ["model_request", "model_request", "model_request"]);
 });
 
 test("optional runtime fields are omitted instead of crossing Worker RPC as undefined", async () => {

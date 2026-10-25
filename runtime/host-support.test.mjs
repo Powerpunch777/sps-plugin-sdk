@@ -61,6 +61,8 @@ test("reported operations are filtered, ASCII-sorted, fresh, and immutable", () 
     "agents.describeExecution",
     "agents.list",
     "sps.runs.list",
+    "sps.models.submit",
+    "sps.models.list",
   ]);
   params.hostVersion = "private-version";
   params.token = "secret";
@@ -69,7 +71,7 @@ test("reported operations are filtered, ASCII-sorted, fresh, and immutable", () 
   assert.deepEqual(result, {
     state: "reported",
     contractVersion: "1.0",
-    operations: ["agents.describeExecution", "agents.list", "agents.sessions.sendMessage", "sps.runs.list", "sps.runs.listEvents"],
+    operations: ["agents.describeExecution", "agents.list", "agents.sessions.sendMessage", "sps.models.list", "sps.models.submit", "sps.runs.list", "sps.runs.listEvents"],
   });
   assert.ok(Object.isFrozen(result));
   assert.ok(Object.isFrozen(result.operations));

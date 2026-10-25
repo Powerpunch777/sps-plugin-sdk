@@ -3,7 +3,8 @@ import type { SpsExecution } from "@sonparkserver/plugin-sdk/runtime";
 export const SPS_PLATFORM_CONTRACT_VERSION: "1.0";
 export const SPS_PLATFORM_CAPABILITIES: readonly [
   "agent.tools.register", "events.subscribe", "events.emit", "jobs.schedule", "plugin.state.read", "plugin.state.write",
-  "agents.read", "agent.sessions.create", "agent.sessions.list", "agent.sessions.send", "agent.sessions.read", "agent.sessions.cancel"
+  "agents.read", "agent.sessions.create", "agent.sessions.list", "agent.sessions.send", "agent.sessions.read", "agent.sessions.cancel",
+  "sps.models.read", "sps.models.submit", "sps.models.cancel"
 ];
 
 export type SpsPlatformCapability = (typeof SPS_PLATFORM_CAPABILITIES)[number];

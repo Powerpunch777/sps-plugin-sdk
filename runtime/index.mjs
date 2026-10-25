@@ -14,6 +14,10 @@ export const SPS_RUNTIME_OPERATIONS = Object.freeze([
   "sps.executions.list",
   "sps.executions.get",
   "sps.executions.summarize",
+  "sps.models.list",
+  "sps.models.submit",
+  "sps.models.get",
+  "sps.models.cancel",
   "sps.workspaceSources.list",
   "sps.runtimes.list",
   "sps.executionGrants.list",
@@ -30,9 +34,11 @@ export const SPS_RUNTIME_OPERATIONS = Object.freeze([
 
 const OPERATION_SET = new Set(SPS_RUNTIME_OPERATIONS);
 const PRIMITIVE_SET = new Set(SPS_CORE_PRIMITIVES);
-const EXECUTION_LANES = new Set(["node", "agent_session"]);
+const EXECUTION_LANES = new Set(["node", "agent_session", "model_request"]);
 const UUID_PATTERN = /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i;
 const CANONICAL_UTC_MILLIS_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
+const MODEL_REQUEST_KEY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
+const MODEL_INPUT_MAX_BYTES = 65_536;
 
 function isRecord(value) {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
@@ -55,7 +61,7 @@ function assertNonEmptyString(value, label) {
 }
 
 function assertExecutionLane(value, label = "lane") {
-  if (!EXECUTION_LANES.has(value)) throw new TypeError(`${label} must be "node" or "agent_session".`);
+  if (!EXECUTION_LANES.has(value)) throw new TypeError(`${label} must be "node", "agent_session", or "model_request".`);
   return value;
 }
 
@@ -63,6 +69,53 @@ function assertUuid(value, label) {
   const text = assertString(value, label);
   if (!UUID_PATTERN.test(text)) throw new TypeError(`${label} must be a UUID.`);
   return text;
+}
+
+function assertCanonicalUuid(value, label) {
+  const text = assertUuid(value, label);
+  if (text.length !== 36) throw new TypeError(`${label} must be a canonical UUID.`);
+  return text.toLowerCase();
+}
+
+function assertExactPlainDataRecord(value, label, allowedKeys) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new TypeError(`${label} must be a plain object.`);
+  }
+  const prototype = Object.getPrototypeOf(value);
+  if (prototype !== Object.prototype && prototype !== null) {
+    throw new TypeError(`${label} must be a plain object.`);
+  }
+  const keys = Reflect.ownKeys(value);
+  const allowed = new Set(allowedKeys);
+  if (keys.length !== allowed.size || keys.some((key) => typeof key !== "string" || !allowed.has(key))) {
+    throw new TypeError(`${label} must contain only ${allowedKeys.join(", ")}.`);
+  }
+  const result = Object.create(null);
+  for (const key of keys) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    if (!descriptor?.enumerable || !("value" in descriptor)) {
+      throw new TypeError(`${label}.${key} must be an enumerable own data property.`);
+    }
+    result[key] = descriptor.value;
+  }
+  return result;
+}
+
+function assertModelInput(value) {
+  const input = assertString(value, "input");
+  if (input.trim().length === 0 || input.length > MODEL_INPUT_MAX_BYTES ||
+    new TextEncoder().encode(input).byteLength > MODEL_INPUT_MAX_BYTES) {
+    throw new TypeError("input must be a non-empty string of at most 65536 UTF-8 bytes.");
+  }
+  return input;
+}
+
+function assertModelRequestKey(value) {
+  const requestKey = assertString(value, "requestKey");
+  if (requestKey.length > 128 || /[\r\n\u2028\u2029]/.test(requestKey) || !MODEL_REQUEST_KEY_PATTERN.test(requestKey)) {
+    throw new TypeError("requestKey must match /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.");
+  }
+  return requestKey;
 }
 
 function assertCanonicalUtcMillis(value, label) {
@@ -235,6 +288,36 @@ export function createSpsRuntimeClient(transport) {
           to,
           lane,
           agentId,
+        });
+      },
+    }),
+    models: Object.freeze({
+      list(companyId) {
+        return request(clientTransport, "sps.models.list", {
+          companyId: assertCanonicalUuid(companyId, "companyId"),
+        });
+      },
+      submit(input) {
+        const value = assertExactPlainDataRecord(input, "model request input", [
+          "companyId", "connectionId", "requestKey", "input",
+        ]);
+        return request(clientTransport, "sps.models.submit", {
+          companyId: assertCanonicalUuid(value.companyId, "companyId"),
+          connectionId: assertCanonicalUuid(value.connectionId, "connectionId"),
+          requestKey: assertModelRequestKey(value.requestKey),
+          input: assertModelInput(value.input),
+        });
+      },
+      get(companyId, runId) {
+        return request(clientTransport, "sps.models.get", {
+          companyId: assertCanonicalUuid(companyId, "companyId"),
+          runId: assertCanonicalUuid(runId, "runId"),
+        });
+      },
+      cancel(companyId, runId) {
+        return request(clientTransport, "sps.models.cancel", {
+          companyId: assertCanonicalUuid(companyId, "companyId"),
+          runId: assertCanonicalUuid(runId, "runId"),
         });
       },
     }),

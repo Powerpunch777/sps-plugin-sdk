@@ -1,6 +1,7 @@
 export const SPS_RUNTIME_CONTRACT_VERSION: "1.0";
 export const SPS_RUNTIME_OPERATIONS: readonly [
   "sps.executions.list", "sps.executions.get", "sps.executions.summarize",
+  "sps.models.list", "sps.models.submit", "sps.models.get", "sps.models.cancel",
   "sps.workspaceSources.list", "sps.runtimes.list", "sps.executionGrants.list",
   "sps.executionGrants.upsert", "sps.executionGrants.revoke", "sps.runs.dispatch",
   "sps.runs.get", "sps.runs.list", "sps.runs.listEvents", "sps.runs.cancel",
@@ -12,7 +13,8 @@ export const SPS_HOST_OPERATIONS: readonly [
   "agents.sessions.getRun", "agents.sessions.list", "agents.sessions.sendMessage",
   "sps.artifacts.list", "sps.artifacts.publish", "sps.executionGrants.list",
   "sps.executionGrants.revoke", "sps.executionGrants.upsert", "sps.executions.get",
-  "sps.executions.list", "sps.executions.summarize", "sps.runs.cancel",
+  "sps.executions.list", "sps.executions.summarize", "sps.models.cancel",
+  "sps.models.get", "sps.models.list", "sps.models.submit", "sps.runs.cancel",
   "sps.runs.dispatch", "sps.runs.get", "sps.runs.list", "sps.runs.listEvents",
   "sps.runtimes.list", "sps.workspaceSources.list"
 ];
@@ -62,12 +64,49 @@ export interface PluginSpsRuntime {
   /** Older Hosts may omit this cached metadata; absence is unknown. */
   connection?: PluginSpsRuntimeConnection;
 }
+export interface PluginSpsModelConnection {
+  id: string;
+  displayName: string;
+  protocol: "responses_text_v1";
+  model: string;
+  state: "configured" | "disabled";
+  executionOwner: "host";
+  authorization: "grant_required";
+  readiness: "unknown";
+  limits: {
+    timeoutMs: number;
+    maxOutputTokens: number;
+    maxRequestBytes: number;
+    maxResponseBytes: number;
+  };
+}
+export interface PluginSpsModelTextResult {
+  status: "completed" | "incomplete";
+  text: string;
+  refusal: string | null;
+  usage: { inputTokens: number; outputTokens: number; totalTokens: number } | null;
+}
+export interface PluginSpsModelRun {
+  id: string;
+  companyId: string;
+  connectionId: string;
+  status: "queued" | "running" | "succeeded" | "failed" | "cancelled" | "interrupted";
+  externalEffects: "not_dispatched" | "unknown";
+  errorCode: string | null;
+  cancellationRequested: boolean;
+  cleanupPending: boolean;
+  resultState: "available" | "not_ready" | "withheld";
+  result: PluginSpsModelTextResult | null;
+  createdAt: string;
+  startedAt: string | null;
+  finishedAt: string | null;
+}
 export interface PluginSpsExecutionGrant { id: string; companyId: string; pluginKey: string; subjectKey: string; nodeId: string; runnerProfileId: string; workspaceSourceId: string | null; status: string; revokedAt: string | null; createdAt: string; updatedAt: string; }
 export interface PluginSpsRun { id: string; companyId: string; pluginKey: string; subjectKey: string; executionGrantId: string; nodeId: string; runnerProfileId: string; workspaceSourceId: string | null; status: string; exitCode: number | null; signal: string | null; timedOut: boolean; error: string | null; claimedAt: string | null; startedAt: string | null; finishedAt: string | null; createdAt: string; updatedAt: string; }
 export interface PluginSpsRunEvent { sequence: number; stream: string; body: string; createdAt: string; }
 export interface PluginSpsArtifact { id: string; companyId: string; pluginKey: string; subjectKey: string; runId: string | null; title: string; kind: string; referenceUrl: string | null; summary: string | null; data: Record<string, unknown>; createdAt: string; updatedAt: string; }
 
-export type SpsExecutionLane = "node" | "agent_session";
+export type SpsExecutionLane = "node" | "agent_session" | "model_request";
 export interface SpsUsageMetric { value: number | null; provenance: "reported" | "estimated" | "unavailable"; }
 export interface SpsUsageEvidence {
   inputTokens: SpsUsageMetric;
@@ -88,7 +127,7 @@ export interface SpsExecution {
   agentId: string | null;
   sessionId: string | null;
   subjectKey: string | null;
-  runtime: { kind: string | null; model: string | null; modelSource: "reported" | "unavailable" };
+  runtime: { kind: string | null; model: string | null; modelSource: "reported" | "configured" | "unavailable" };
   status: string;
   phase: "queued" | "active" | "stopping" | "succeeded" | "failed" | "cancelled" | "interrupted" | "unknown";
   cancellationRequested: boolean;
@@ -141,6 +180,7 @@ export interface PluginSpsExecutionGrantInput { companyId: string; subjectKey: s
 export interface PluginSpsRunDispatchInput { companyId: string; executionGrantId: string; args: string[]; env?: Record<string, string>; stdin?: string | null; timeoutMs?: number | null; }
 export interface PluginSpsRunListOptions { subjectKey?: string | null; status?: string | null; limit?: number | null; beforeId?: string | null; }
 export interface PluginSpsExecutionListOptions { lane?: SpsExecutionLane; limit?: number; before?: SpsExecutionCursor; }
+export interface PluginSpsModelSubmitInput { companyId: string; connectionId: string; requestKey: string; input: string; }
 export interface PluginSpsArtifactPublishInput { companyId: string; subjectKey: string; runId?: string | null; title: string; kind?: string | null; referenceUrl?: string | null; summary?: string | null; data?: JsonObject; }
 
 export interface PluginSpsClient {
@@ -148,6 +188,12 @@ export interface PluginSpsClient {
     list(companyId: string, options?: PluginSpsExecutionListOptions): Promise<SpsExecutionPage>;
     get(companyId: string, lane: SpsExecutionLane, runId: string): Promise<SpsExecution | null>;
     summarize(companyId: string, options: SpsExecutionSummaryOptions): Promise<SpsExecutionSummary>;
+  };
+  readonly models: {
+    list(companyId: string): Promise<PluginSpsModelConnection[]>;
+    submit(input: PluginSpsModelSubmitInput): Promise<PluginSpsModelRun>;
+    get(companyId: string, runId: string): Promise<PluginSpsModelRun | null>;
+    cancel(companyId: string, runId: string): Promise<PluginSpsModelRun | null>;
   };
   readonly workspaceSources: { list(companyId: string): Promise<PluginSpsWorkspaceSource[]> };
   readonly runtimes: { list(companyId: string, options?: { nodeId?: string | null }): Promise<PluginSpsRuntime[]> };
