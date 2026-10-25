@@ -7,6 +7,7 @@ const LIFECYCLE_METHODS = new Set(["initialize", "health", "shutdown"]);
 const PLATFORM_METHODS = new Set(["executeTool", "onEvent", "runJob", "getData", "performAction"]);
 const PLATFORM_AGENT_OPERATIONS = Object.freeze({
   "agents.list": "agents.read",
+  "agents.describeExecution": "agents.read",
   "agents.sessions.create": "agent.sessions.create",
   "agents.sessions.list": "agent.sessions.list",
   "agents.sessions.sendMessage": "agent.sessions.send",
@@ -186,6 +187,12 @@ export function runSpsWorker(plugin, options = {}) {
     }
     return callHost(operation, params);
   }
+  function boundedAgentString(value, label) {
+    if (typeof value !== "string" || value.trim().length === 0 || value.length > 160) {
+      throw new TypeError(`${label} must be a non-empty string of at most 160 characters.`);
+    }
+    return value;
+  }
   function withAgentTenant(companyId, handler) {
     const invocationCompanyId = invocationStorage.getStore()?.scope?.companyId;
     return agentTenantStorage.run({ companyId, invocationCompanyId }, handler);
@@ -193,6 +200,16 @@ export function runSpsWorker(plugin, options = {}) {
   const platform = Object.freeze({
     agents: Object.freeze({
       list(input) { return agentRequest("agents.list", input); },
+      describeExecution(agentId, companyId) {
+        try {
+          return agentRequest("agents.describeExecution", {
+            agentId: boundedAgentString(agentId, "agentId"),
+            companyId: boundedAgentString(companyId, "companyId"),
+          }, true);
+        } catch (cause) {
+          return Promise.reject(cause);
+        }
+      },
       sessions: Object.freeze({
         create(agentId, companyId, options = {}) { return agentRequest("agents.sessions.create", { ...options, agentId, companyId }); },
         list(agentId, companyId) { return agentRequest("agents.sessions.list", { agentId, companyId }); },

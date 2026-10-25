@@ -4,6 +4,7 @@ import { SPS_HOST_OPERATIONS, readSpsHostSupport } from "./host-support.mjs";
 import { SPS_RUNTIME_OPERATIONS } from "./index.mjs";
 
 const agentOperations = [
+  "agents.describeExecution",
   "agents.list",
   "agents.sessions.create",
   "agents.sessions.list",
@@ -57,6 +58,7 @@ test("reported operations are filtered, ASCII-sorted, fresh, and immutable", () 
     "sps.runs.listEvents",
     "agents.sessions.sendMessage",
     "future.handlers.lookup",
+    "agents.describeExecution",
     "agents.list",
     "sps.runs.list",
   ]);
@@ -67,7 +69,7 @@ test("reported operations are filtered, ASCII-sorted, fresh, and immutable", () 
   assert.deepEqual(result, {
     state: "reported",
     contractVersion: "1.0",
-    operations: ["agents.list", "agents.sessions.sendMessage", "sps.runs.list", "sps.runs.listEvents"],
+    operations: ["agents.describeExecution", "agents.list", "agents.sessions.sendMessage", "sps.runs.list", "sps.runs.listEvents"],
   });
   assert.ok(Object.isFrozen(result));
   assert.ok(Object.isFrozen(result.operations));

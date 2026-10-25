@@ -72,10 +72,11 @@ its own workflow meaning on top of those primitives.
 ## Runtime facade
 
 The `executions.list`, `executions.get`, `executions.summarize`, `runs.list`,
-and `runs.cancel` APIs below are unreleased pinned-source additions; they are not present in the
-published `@sonparkserver/plugin-sdk` v0.11.0 tag. Consumers need to pin an SDK
-source revision containing these additions. The runtime contract version
-remains `1.0`, but matching protocol versions do not establish Host support.
+`runs.cancel`, and `agents.describeExecution` APIs below are unreleased
+pinned-source additions; they are not present in the published
+`@sonparkserver/plugin-sdk` v0.11.0 tag. Consumers need to pin an SDK source
+revision containing these additions. The runtime contract version remains
+`1.0`, but matching protocol versions do not establish Host support.
 Confirm support in the target Host independently before relying on them.
 
 New Worker code can import the explicit public entrypoint:
@@ -141,6 +142,13 @@ can route execution.
 report of registered RPC handlers. A missing or unsupported report stays
 `unknown`; this is not evidence of permission, backend availability, login, or
 readiness. Older Hosts are never inferred from their API or Host version.
+
+`context.agents.describeExecution(agentId, companyId)` is a read-only
+`agents.read` bridge for one agent's cached adapter configuration and optional
+Node observation. Both identifiers must be non-empty strings of at most 160
+characters, and the company must match the authenticated invocation. Its
+descriptor does not establish permission, login, live readiness, backend
+availability, or cancellation support; authorization is rechecked on dispatch.
 
 ## Portable Worker bootstrap
 

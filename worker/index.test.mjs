@@ -34,6 +34,114 @@ test("Agent session callbacks receive terminal events and are released once", as
   input.end();await worker.closed;
 });
 
+test("Agent execution descriptors use the exact read-only RPC and authenticated tenant", async () => {
+  const descriptor = {
+    agentId: "agent-1",
+    adapterType: "openai",
+    state: "configured",
+    adapterRegistration: "registered",
+    executionOwner: "adapter",
+    authorization: "recheck_on_dispatch",
+    readiness: "unknown",
+    node: null,
+  };
+  const { input, lines, worker } = createHarness(defineSpsPlugin({ platform: defineSpsPlatformContract({
+    capabilities: ["agents.read"],
+    actions: [{ key: "describe", handler: (_params, context) => context.agents.describeExecution("agent-1", "company-1") }],
+  }) }));
+  input.write(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: {} }) + "\n");
+  await eventually(() => lines.length === 1);
+  input.write(JSON.stringify({
+    jsonrpc: "2.0", id: 2, method: "performAction",
+    paperclipInvocation: { id: "inv-describe", scope: { companyId: "company-1" } },
+    params: { key: "describe", companyId: "company-1", params: {}, actorContext: { type: "user", companyId: "company-1" } },
+  }) + "\n");
+  await eventually(() => lines.length === 2);
+  assert.deepEqual(lines[1], {
+    jsonrpc: "2.0", id: "sps-1", method: "agents.describeExecution",
+    params: { agentId: "agent-1", companyId: "company-1" },
+    paperclipInvocationId: "inv-describe",
+  });
+  input.write(JSON.stringify({ jsonrpc: "2.0", id: "sps-1", result: descriptor }) + "\n");
+  await eventually(() => lines.length === 3);
+  assert.deepEqual(lines[2], { jsonrpc: "2.0", id: 2, result: descriptor });
+  input.end();
+  await worker.closed;
+});
+
+test("Agent execution descriptor denies missing capability and missing or cross-company scope before Host calls", async () => {
+  const cases = [
+    {
+      capabilities: [],
+      platform: { actions: [{ key: "describe", handler: (_params, context) => context.agents.describeExecution("agent-1", "company-1") }] },
+      invocation: { id: "inv-denied", scope: { companyId: "company-1" } },
+      params: { key: "describe", companyId: "company-1", params: {}, actorContext: { type: "user", companyId: "company-1" } },
+      expected: /Undeclared.*agents\.read/,
+    },
+    {
+      capabilities: ["agents.read"],
+      platform: { data: [{ key: "describe", handler: (_params, context) => context.agents.describeExecution("agent-1", "company-1") }] },
+      params: { key: "describe", params: {} },
+      expected: /authenticated invocation company/,
+    },
+    {
+      capabilities: ["agents.read"],
+      platform: { actions: [{ key: "describe", handler: (_params, context) => context.agents.describeExecution("agent-1", "company-2") }] },
+      invocation: { id: "inv-cross-company", scope: { companyId: "company-1" } },
+      params: { key: "describe", params: {}, actorContext: { type: "user", companyId: "company-2" } },
+      expected: /authenticated invocation company/,
+    },
+  ];
+  for (const [index, scenario] of cases.entries()) {
+    const { input, lines, worker } = createHarness(defineSpsPlugin({ platform: defineSpsPlatformContract({
+      capabilities: scenario.capabilities,
+      ...scenario.platform,
+    }) }));
+    input.write(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: {} }) + "\n");
+    await eventually(() => lines.length === 1);
+    input.write(JSON.stringify({
+      jsonrpc: "2.0", id: 2, method: scenario.platform.data ? "getData" : "performAction",
+      ...(scenario.invocation ? { paperclipInvocation: scenario.invocation } : {}),
+      params: scenario.params,
+    }) + "\n");
+    await eventually(() => lines.length === 2);
+    assert.match(lines[1].error.message, scenario.expected, `case ${index}`);
+    assert.equal(lines.some((line) => line.method === "agents.describeExecution"), false);
+    input.end();
+    await worker.closed;
+  }
+});
+
+test("Agent execution descriptor rejects invalid identifiers before Host calls", async () => {
+  const invalidArguments = [
+    ["", "company-1"],
+    ["   ", "company-1"],
+    ["a".repeat(161), "company-1"],
+    [7, "company-1"],
+    ["agent-1", ""],
+    ["agent-1", "company-" + "a".repeat(153)],
+    ["agent-1", null],
+  ];
+  for (const [index, [agentId, companyId]] of invalidArguments.entries()) {
+    const { input, lines, worker } = createHarness(defineSpsPlugin({ platform: defineSpsPlatformContract({
+      capabilities: ["agents.read"],
+      actions: [{ key: "describe", handler: (_params, context) => context.agents.describeExecution(agentId, companyId) }],
+    }) }));
+    input.write(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: {} }) + "\n");
+    await eventually(() => lines.length === 1);
+    input.write(JSON.stringify({
+      jsonrpc: "2.0", id: 2, method: "performAction",
+      paperclipInvocation: { id: `inv-invalid-${index}`, scope: { companyId: "company-1" } },
+      params: { key: "describe", companyId: "company-1", params: {}, actorContext: { type: "user", companyId: "company-1" } },
+    }) + "\n");
+    await eventually(() => lines.length === 2);
+    assert.match(lines[1].error.message, /agentId|companyId/);
+    assert.equal(lines.some((line) => line.method === "agents.describeExecution"), false);
+    input.end();
+    await worker.closed;
+  }
+});
+
 test("Agent session run inspection and cancellation use the exact bounded Core requests", async () => {
   const inspected = { runId: "run-1", status: "running", cancellationRequested: false, termination: "not_applicable", errorCode: null, error: null };
   const cancellation = { runId: "run-1", status: "cancelling", cancellationRequested: true, termination: "pending", errorCode: null, error: null };

@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Add `agents.describeExecution` through the public Worker bridge with a
+  company-scoped cached configuration/Node-observation descriptor; it does not
+  report permission, login, live readiness, backend availability, or cancel support.
 - Add a bounded public Host support reader for explicitly reported RPC handlers;
   missing or unsupported reports stay unknown and do not imply permissions or readiness.
 - Add optional read-only cached Node heartbeat/approval metadata to `PluginSpsRuntime`;

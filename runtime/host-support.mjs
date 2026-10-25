@@ -1,4 +1,5 @@
 const HOST_OPERATIONS = [
+  "agents.describeExecution",
   "agents.list",
   "agents.sessions.cancel",
   "agents.sessions.create",

@@ -29,6 +29,21 @@ export interface SpsAgentSessionRunResult {
   error: string | null;
   execution?: SpsExecution;
 }
+/** Cached agent adapter configuration and optional Node observation only; this is not permission, login, live/backend readiness, or cancellation support. */
+export interface SpsAgentExecutionDescriptor {
+  agentId: string;
+  adapterType: string;
+  state: "configured" | "disabled" | "unknown";
+  adapterRegistration: "registered" | "unavailable";
+  executionOwner: "adapter" | "node";
+  authorization: "recheck_on_dispatch";
+  readiness: "unknown";
+  node: null | {
+    id: string | null;
+    state: "inactive" | "unverified" | "recently_seen" | "offline" | "unknown";
+    observedAt: string | null;
+  };
+}
 /** The narrow Worker-to-Host API available while a declared handler runs. */
 export interface SpsPlatformInvocationContext {
   readonly events: {
@@ -39,6 +54,7 @@ export interface SpsPlatformInvocationContext {
 }
 export interface SpsAgentSessionClient {
   list(input: { companyId: string; limit?: number }): Promise<Array<Record<string, JsonValue>>>;
+  describeExecution(agentId: string, companyId: string): Promise<SpsAgentExecutionDescriptor>;
   sessions: {
     create(agentId: string, companyId: string, options?: { taskKey?: string; reason?: string }): Promise<{ sessionId: string }>;
     list(agentId: string, companyId: string): Promise<Array<Record<string, JsonValue>>>;
