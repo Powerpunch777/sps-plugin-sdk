@@ -8,6 +8,7 @@ const HOST_OPERATIONS = [
   "agents.sessions.sendMessage",
   "sps.artifacts.list",
   "sps.artifacts.publish",
+  "sps.connectivity.current",
   "sps.executionGrants.list",
   "sps.executionGrants.revoke",
   "sps.executionGrants.upsert",

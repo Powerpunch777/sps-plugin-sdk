@@ -59,10 +59,42 @@ test("runtime facade uses the exact existing Host RPC names and payloads", async
   ]);
   assert.deepEqual(SPS_RUNTIME_OPERATIONS, [
     "sps.executions.list", "sps.executions.get", "sps.executions.summarize",
+    "sps.connectivity.current",
     "sps.models.list", "sps.models.submit", "sps.models.get", "sps.models.cancel",
     "sps.workspaceSources.list", "sps.runtimes.list", "sps.executionGrants.list", "sps.executionGrants.upsert", "sps.executionGrants.revoke",
     "sps.runs.dispatch", "sps.runs.get", "sps.runs.list", "sps.runs.listEvents", "sps.runs.cancel", "sps.artifacts.publish", "sps.artifacts.list",
   ]);
+});
+
+test("Native connectivity facade sends an empty request and validates scoped snapshots", async () => {
+  const calls = [];
+  const snapshot = { state: "verified", transport: "native_tls", hostId: "11111111-1111-4111-8111-111111111111",
+    workspaceId: "22222222-2222-4222-8222-222222222222", authorization: "authorized",
+    evidence: "authenticated_request", observedAt: "2026-10-27T10:20:30.000Z" };
+  const client = createSpsRuntimeClient({ async request(operation, input) { calls.push({ operation, input }); return snapshot; } });
+  assert.deepEqual(await client.connectivity.current(), snapshot);
+  assert.deepEqual(calls, [{ operation: "sps.connectivity.current", input: {} }]);
+  assert.ok(Object.isFrozen(await client.connectivity.current()));
+  assert.throws(() => client.connectivity.current(undefined), /does not accept arguments/);
+  assert.throws(() => client.connectivity.current({}), /does not accept arguments/);
+});
+
+test("Native connectivity facade accepts unavailable snapshots and rejects unsafe or malformed DTOs", async () => {
+  const unavailable = { state: "unavailable", transport: "native_tls", hostId: null,
+    workspaceId: "22222222-2222-4222-8222-222222222222", authorization: "unknown", evidence: "none",
+    observedAt: "2026-10-27T10:20:30.000Z" };
+  const clientFor = value => createSpsRuntimeClient({ async request() { return value; } });
+  assert.deepEqual(await clientFor(unavailable).connectivity.current(), unavailable);
+  const invalid = [
+    { ...unavailable, address: "https://private.example" },
+    { ...unavailable, workspaceId: "not-a-uuid" },
+    { ...unavailable, observedAt: "2026-02-30T10:20:30.000Z" },
+    { ...unavailable, observedAt: "2026-99-99T10:20:30.000Z" },
+    { ...unavailable, evidence: "authenticated_request" },
+    { ...unavailable, state: "verified" },
+    Object.defineProperty({ ...unavailable }, "hostId", { enumerable: true, get() { throw new Error("must not run"); } }),
+  ];
+  for (const value of invalid) await assert.rejects(clientFor(value).connectivity.current(), TypeError);
 });
 
 test("malformed declared fields fail before transport while raw fields are omitted", () => {

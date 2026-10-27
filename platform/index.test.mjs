@@ -65,6 +65,13 @@ test("declares the separate model-request capabilities without adding Core primi
   assert.deepEqual(defineSpsPlatformContract({ capabilities }).capabilities, capabilities);
 });
 
+test("declares Native connectivity read without adding a transport primitive", () => {
+  assert.ok(SPS_PLATFORM_CAPABILITIES.includes("sps.connectivity.read"));
+  assert.ok(!SPS_CORE_PRIMITIVES.includes("sps.connectivity.read"));
+  assert.deepEqual(defineSpsPlatformContract({ capabilities: ["sps.connectivity.read"] }).capabilities,
+    ["sps.connectivity.read"]);
+});
+
 test("declares common execution reads alongside model requests in a portable Worker", () => {
   const capabilities = ["sps.models.read", "sps.models.submit", "sps.models.cancel", "sps.executions.read"];
   assert.deepEqual(defineSpsPlatformContract({ capabilities }).capabilities, capabilities);

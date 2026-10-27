@@ -251,6 +251,59 @@ test("model request RPCs use exact payloads and the declared operation-specific 
   await worker.closed;
 });
 
+test("Native connectivity RPC requires its read capability and an authenticated invocation, then forwards no target input", async () => {
+  const companyId = "11111111-1111-4111-8111-111111111111";
+  let transport;
+  const { input, lines, worker } = createHarness(defineSpsPlugin({
+    initialize({ spsTransport }) { transport = spsTransport; },
+    platform: defineSpsPlatformContract({
+      capabilities: ["sps.connectivity.read"],
+      actions: [{ key: "connectivity", handler: () => transport.request("sps.connectivity.current", {}) }],
+    }),
+  }));
+  input.write(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: {} }) + "\n");
+  await eventually(() => lines.length === 1);
+  input.write(JSON.stringify({ jsonrpc: "2.0", id: 2, method: "performAction",
+    paperclipInvocation: { id: "inv-connectivity", scope: { companyId } },
+    params: { key: "connectivity", companyId, params: {}, actorContext: { type: "user", companyId } } }) + "\n");
+  await eventually(() => lines.length === 2);
+  assert.deepEqual(lines[1], { jsonrpc: "2.0", id: "sps-1", method: "sps.connectivity.current",
+    params: {}, paperclipInvocationId: "inv-connectivity" });
+  input.write(JSON.stringify({ jsonrpc: "2.0", id: "sps-1", result: { state: "unavailable" } }) + "\n");
+  await eventually(() => lines.length === 3);
+  assert.equal(lines[2].result.state, "unavailable");
+  input.end();
+  await worker.closed;
+});
+
+test("Native connectivity RPC rejects missing capability, invocation, and caller-supplied target fields", async () => {
+  for (const scenario of ["capability", "invocation", "target"]) {
+    let transport;
+    let denied;
+    const companyId = "11111111-1111-4111-8111-111111111111";
+    const capabilities = scenario === "capability" ? [] : ["sps.connectivity.read"];
+    const { input, lines, worker } = createHarness(defineSpsPlugin({
+      initialize({ spsTransport }) { transport = spsTransport; },
+      platform: defineSpsPlatformContract({ capabilities, actions: [{ key: "invoke", handler: async () => {
+        try {
+          return await transport.request("sps.connectivity.current", scenario === "target" ? { hostId: companyId } : {});
+        } catch (cause) { denied = cause.message; return "denied"; }
+      } }] }),
+    }));
+    input.write(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: {} }) + "\n");
+    await eventually(() => lines.length === 1);
+    input.write(JSON.stringify({ jsonrpc: "2.0", id: 2, method: "performAction",
+      ...(scenario === "invocation" ? {} : { paperclipInvocation: { id: `inv-${scenario}`, scope: { companyId } } }),
+      params: { key: "invoke", companyId, params: {}, actorContext: { type: "user", companyId } } }) + "\n");
+    await eventually(() => lines.length === 2);
+    assert.equal(lines[1].result, "denied");
+    assert.match(denied, scenario === "capability" ? /Undeclared.*sps\.connectivity\.read/ : /connectivity current input|authenticated invocation company/);
+    assert.equal(lines.some((line) => line.method === "sps.connectivity.current"), false);
+    input.end();
+    await worker.closed;
+  }
+});
+
 test("each model RPC requires its exact capability and matching invocation scope", async () => {
   const companyId = "11111111-1111-4111-8111-111111111111";
   const foreignCompanyId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";

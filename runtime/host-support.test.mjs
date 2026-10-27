@@ -23,6 +23,7 @@ test("known Host operations are the runtime facade plus the public agent handler
   assert.deepEqual(SPS_HOST_OPERATIONS, [...SPS_HOST_OPERATIONS].sort());
   assert.ok(Object.isFrozen(SPS_HOST_OPERATIONS));
   assert.ok(!SPS_HOST_OPERATIONS.includes("agents.sessions.close"));
+  assert.ok(SPS_HOST_OPERATIONS.includes("sps.connectivity.current"));
 });
 
 test("missing, inherited, accessor, and future Host reports remain unknown", () => {
@@ -63,6 +64,7 @@ test("reported operations are filtered, ASCII-sorted, fresh, and immutable", () 
     "sps.runs.list",
     "sps.models.submit",
     "sps.models.list",
+    "sps.connectivity.current",
   ]);
   params.hostVersion = "private-version";
   params.token = "secret";
@@ -71,7 +73,7 @@ test("reported operations are filtered, ASCII-sorted, fresh, and immutable", () 
   assert.deepEqual(result, {
     state: "reported",
     contractVersion: "1.0",
-    operations: ["agents.describeExecution", "agents.list", "agents.sessions.sendMessage", "sps.models.list", "sps.models.submit", "sps.runs.list", "sps.runs.listEvents"],
+    operations: ["agents.describeExecution", "agents.list", "agents.sessions.sendMessage", "sps.connectivity.current", "sps.models.list", "sps.models.submit", "sps.runs.list", "sps.runs.listEvents"],
   });
   assert.ok(Object.isFrozen(result));
   assert.ok(Object.isFrozen(result.operations));

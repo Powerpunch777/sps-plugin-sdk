@@ -14,6 +14,7 @@ export const SPS_RUNTIME_OPERATIONS = Object.freeze([
   "sps.executions.list",
   "sps.executions.get",
   "sps.executions.summarize",
+  "sps.connectivity.current",
   "sps.models.list",
   "sps.models.submit",
   "sps.models.get",
@@ -39,6 +40,7 @@ const UUID_PATTERN = /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i;
 const CANONICAL_UTC_MILLIS_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
 const MODEL_REQUEST_KEY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 const MODEL_INPUT_MAX_BYTES = 65_536;
+const CONNECTIVITY_FIELDS = ["state", "transport", "hostId", "workspaceId", "authorization", "evidence", "observedAt"];
 
 function isRecord(value) {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
@@ -99,6 +101,24 @@ function assertExactPlainDataRecord(value, label, allowedKeys) {
     result[key] = descriptor.value;
   }
   return result;
+}
+
+function validateConnectivitySnapshot(value) {
+  const result = assertExactPlainDataRecord(value, "connectivity snapshot", CONNECTIVITY_FIELDS);
+  if (result.transport !== "native_tls" || !["verified", "unavailable"].includes(result.state)) {
+    throw new TypeError("connectivity snapshot has an unsupported state or transport.");
+  }
+  result.workspaceId = assertCanonicalUuid(result.workspaceId, "connectivity snapshot.workspaceId");
+  result.observedAt = assertCanonicalUtcMillis(result.observedAt, "connectivity snapshot.observedAt");
+  if (result.state === "verified") {
+    result.hostId = assertCanonicalUuid(result.hostId, "connectivity snapshot.hostId");
+    if (result.authorization !== "authorized" || result.evidence !== "authenticated_request") {
+      throw new TypeError("verified connectivity snapshot requires authenticated request evidence.");
+    }
+  } else if (result.hostId !== null || result.authorization !== "unknown" || result.evidence !== "none") {
+    throw new TypeError("unavailable connectivity snapshot must not claim Host or authorization evidence.");
+  }
+  return Object.freeze({ ...result });
 }
 
 function assertModelInput(value) {
@@ -289,6 +309,13 @@ export function createSpsRuntimeClient(transport) {
           lane,
           agentId,
         });
+      },
+    }),
+    connectivity: Object.freeze({
+      current(...args) {
+        if (args.length !== 0) throw new TypeError("connectivity.current does not accept arguments.");
+        return Promise.resolve(request(clientTransport, "sps.connectivity.current", {}))
+          .then(validateConnectivitySnapshot);
       },
     }),
     models: Object.freeze({

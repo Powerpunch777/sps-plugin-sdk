@@ -166,6 +166,16 @@ report of registered RPC handlers. A missing or unsupported report stays
 `unknown`; this is not evidence of permission, backend availability, login, or
 readiness. Older Hosts are never inferred from their API or Host version.
 
+`runtime.connectivity.current()` is a read-only, capability-gated snapshot of
+the current authenticated Native TLS invocation and its Workspace authorization.
+It reports `verified` only with authenticated-request evidence, or `unavailable`
+without claiming Host identity or authorization. The result includes the
+observation time and excludes network addresses, device details, certificates,
+pins, and credentials. It does not report live socket readiness, enumerate
+other Hosts or Workspaces, grant model or execution access, or provide events.
+Check `readSpsHostSupport` for `sps.connectivity.current` before calling it on
+older Hosts; this feature is additive and unreleased.
+
 `context.agents.describeExecution(agentId, companyId)` is a read-only
 `agents.read` bridge for one agent's cached adapter configuration and optional
 Node observation. Both identifiers must be non-empty strings of at most 160

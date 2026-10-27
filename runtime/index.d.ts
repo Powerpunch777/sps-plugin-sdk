@@ -1,6 +1,7 @@
 export const SPS_RUNTIME_CONTRACT_VERSION: "1.0";
 export const SPS_RUNTIME_OPERATIONS: readonly [
   "sps.executions.list", "sps.executions.get", "sps.executions.summarize",
+  "sps.connectivity.current",
   "sps.models.list", "sps.models.submit", "sps.models.get", "sps.models.cancel",
   "sps.workspaceSources.list", "sps.runtimes.list", "sps.executionGrants.list",
   "sps.executionGrants.upsert", "sps.executionGrants.revoke", "sps.runs.dispatch",
@@ -11,7 +12,7 @@ export const SPS_RUNTIME_OPERATIONS: readonly [
 export const SPS_HOST_OPERATIONS: readonly [
   "agents.describeExecution", "agents.list", "agents.sessions.cancel", "agents.sessions.create",
   "agents.sessions.getRun", "agents.sessions.list", "agents.sessions.sendMessage",
-  "sps.artifacts.list", "sps.artifacts.publish", "sps.executionGrants.list",
+  "sps.artifacts.list", "sps.artifacts.publish", "sps.connectivity.current", "sps.executionGrants.list",
   "sps.executionGrants.revoke", "sps.executionGrants.upsert", "sps.executions.get",
   "sps.executions.list", "sps.executions.summarize", "sps.models.cancel",
   "sps.models.get", "sps.models.list", "sps.models.submit", "sps.runs.cancel",
@@ -176,6 +177,9 @@ export type SpsExecutionSummary = PluginSpsExecutionSummary;
 export interface SpsRuntimeTransport {
   request(operation: SpsRuntimeOperation, input: Record<string, unknown>): Promise<unknown>;
 }
+export type PluginSpsConnectivitySnapshot =
+  | Readonly<{ state: "verified"; transport: "native_tls"; hostId: string; workspaceId: string; authorization: "authorized"; evidence: "authenticated_request"; observedAt: string }>
+  | Readonly<{ state: "unavailable"; transport: "native_tls"; hostId: null; workspaceId: string; authorization: "unknown"; evidence: "none"; observedAt: string }>;
 export interface PluginSpsExecutionGrantInput { companyId: string; subjectKey: string; nodeId: string; runnerProfileId: string; workspaceSourceId?: string | null; }
 export interface PluginSpsRunDispatchInput { companyId: string; executionGrantId: string; args: string[]; env?: Record<string, string>; stdin?: string | null; timeoutMs?: number | null; }
 export interface PluginSpsRunListOptions { subjectKey?: string | null; status?: string | null; limit?: number | null; beforeId?: string | null; }
@@ -184,6 +188,7 @@ export interface PluginSpsModelSubmitInput { companyId: string; connectionId: st
 export interface PluginSpsArtifactPublishInput { companyId: string; subjectKey: string; runId?: string | null; title: string; kind?: string | null; referenceUrl?: string | null; summary?: string | null; data?: JsonObject; }
 
 export interface PluginSpsClient {
+  readonly connectivity: { current(): Promise<PluginSpsConnectivitySnapshot> };
   readonly executions: {
     list(companyId: string, options?: PluginSpsExecutionListOptions): Promise<SpsExecutionPage>;
     get(companyId: string, lane: SpsExecutionLane, runId: string): Promise<SpsExecution | null>;

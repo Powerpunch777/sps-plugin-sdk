@@ -14,6 +14,7 @@ export const SPS_PLATFORM_CAPABILITIES = Object.freeze([
   "agent.sessions.read",
   "agent.sessions.cancel",
   "sps.executions.read",
+  "sps.connectivity.read",
   "sps.models.read",
   "sps.models.submit",
   "sps.models.cancel",
