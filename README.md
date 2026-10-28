@@ -21,6 +21,52 @@ const plan = analyzeSpsPluginDependenciesV1({
 });
 ```
 
+## Workspace Plugin Configuration (source contract)
+
+Plugins can opt in to a dedicated Workspace UI/action worker and declare the
+shape of its Workspace-specific configuration. These fields are additive
+source contracts; they do not imply support in every released Host version.
+
+```js
+import { defineSpsPluginManifest } from "@sonparkserver/plugin-sdk/manifest";
+
+export default defineSpsPluginManifest({
+  id: "com.example.workspace-tool",
+  apiVersion: 1,
+  version: "1.0.0",
+  displayName: "Workspace Tool",
+  entrypoints: {
+    worker: "./worker.mjs",
+    workspaceWorker: "./workspace-worker.mjs",
+  },
+  workspaceConfigSchema: {
+    type: "object",
+    properties: {
+      projectLabel: { type: "string", title: "Project label" },
+      includeArchived: { type: "boolean", default: false },
+    },
+    additionalProperties: false,
+  },
+});
+```
+
+`entrypoints.workspaceWorker` is an optional, safe package-relative path for a
+separate Workspace integration worker. `workspaceConfigSchema` is an optional
+inline JSON Schema object at the manifest top level; it requires
+`entrypoints.workspaceWorker`. Omitting the schema gives that Workspace an
+empty `{}` configuration. Workspace configuration is stored for that plugin
+and Workspace by the Host. It is separate from plugin-wide configuration: the
+Host does not fall back to or copy global settings when Workspace configuration
+is missing. Both the local Workspace UI/action path and Native Workspace UI,
+data, and action calls use the declared dedicated worker lane when present.
+
+Keep this schema to non-secret JSON configuration. `secret-ref` and async
+schemas are rejected; do not put credentials or raw secret values in this
+configuration. This declaration does not provide raw secret storage, arbitrary
+HTTP or SQL access, event subscriptions, worker lifecycle management, or
+tool/Agent capabilities. It also does not claim to sandbox a worker from the
+operating system or network; Host authorization remains authoritative.
+
 This is analysis evidence only. It never installs, downloads, enables,
 disables, deletes, executes, or otherwise changes a plugin. A host product
 must present the report and make any lifecycle decision explicitly.

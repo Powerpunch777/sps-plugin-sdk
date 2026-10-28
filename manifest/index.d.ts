@@ -45,6 +45,13 @@ export interface SpsInboxActionDeclaration {
   destructive?: boolean;
 }
 
+export interface SpsPluginEntrypoints {
+  worker?: string;
+  ui?: string;
+  /** Dedicated Worker module used only for Host Workspace integrations. */
+  workspaceWorker?: string;
+}
+
 export interface SpsWorkspaceSurfaceManifest {
   ui?: {
     workspaceShell?: SpsWorkspaceShellDeclaration;
@@ -59,7 +66,9 @@ export interface SpsPluginManifest extends SpsWorkspaceSurfaceManifest {
   version: string;
   displayName: string;
   capabilities?: readonly string[];
-  entrypoints?: { worker?: string; ui?: string };
+  entrypoints?: SpsPluginEntrypoints;
+  /** Inline JSON Schema applied to Host-owned Workspace configuration; requires entrypoints.workspaceWorker. */
+  workspaceConfigSchema?: Record<string, unknown>;
   [key: string]: unknown;
 }
 
