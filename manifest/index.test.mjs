@@ -69,3 +69,71 @@ test("requires the matching capability and UI bundle for declared SPS surfaces",
     inbox: { actions: [{ id: "open", displayName: "Open", action: "open" }] },
   }), /inbox\.actions\.register/);
 });
+
+test("preserves a safe Workspace Worker and inline config schema", () => {
+  const workspaceConfigSchema = { type: "object", properties: {
+    enabled: { type: "boolean" }, connectionId: { type: "string", format: "uuid" },
+  } };
+  const manifest = defineSpsPluginManifest({
+    id: "com.example.workspace-worker",
+    apiVersion: 1,
+    version: "1.0.0",
+    displayName: "Workspace Worker",
+    entrypoints: {
+      worker: "./dist/worker.js",
+      workspaceWorker: "./dist/workspace-worker.js",
+    },
+    workspaceConfigSchema,
+  });
+  assert.deepEqual(manifest.entrypoints, {
+    worker: "./dist/worker.js",
+    workspaceWorker: "./dist/workspace-worker.js",
+  });
+  assert.equal(manifest.workspaceConfigSchema, workspaceConfigSchema);
+});
+
+test("requires a Workspace Worker when its inline config schema is declared", () => {
+  assert.throws(() => defineSpsPluginManifest({
+    id: "com.example.orphan-schema",
+    apiVersion: 1,
+    version: "1.0.0",
+    displayName: "Orphan schema",
+    workspaceConfigSchema: { type: "object" },
+  }), /workspaceConfigSchema requires manifest\.entrypoints\.workspaceWorker/);
+});
+
+test("rejects unsafe Workspace Worker paths and non-JSON config schemas", () => {
+  const base = { id: "com.example.unsafe-worker", apiVersion: 1, version: "1.0.0", displayName: "Unsafe" };
+  for (const path of ["../outside.js", "/absolute.js", "C:/absolute.js", "./nested/../outside.js", "nested\\worker.js",
+    "https://example.test/worker.js", "././worker.js", "nested//worker.js", "worker.js/", "worker.js?x", "worker.js#x",
+    "worker*.js", "mailto:worker.js"]) {
+    assert.throws(() => defineSpsPluginManifest({ ...base, entrypoints: { workspaceWorker: path } }), /safe relative package path/);
+  }
+  const cyclic = { type: "object" };
+  cyclic.self = cyclic;
+  for (const schema of ["./dist/schema.json", new Date(), cyclic, { type: "object", properties: { value: undefined } }]) {
+    assert.throws(() => defineSpsPluginManifest({ ...base, entrypoints: { workspaceWorker: "./worker.mjs" }, workspaceConfigSchema: schema }), /plain JSON object/);
+  }
+});
+
+test("rejects Workspace config secret references and async schemas", () => {
+  const base = { id: "com.example.workspace-config", apiVersion: 1, version: "1.0.0", displayName: "Workspace config",
+    entrypoints: { workspaceWorker: "./worker.mjs" } };
+  assert.throws(() => defineSpsPluginManifest({ ...base,
+    workspaceConfigSchema: { type: "object", properties: { token: { type: "string", format: "secret-ref" } } },
+  }), /cannot declare secret-ref/);
+  assert.throws(() => defineSpsPluginManifest({ ...base,
+    workspaceConfigSchema: { type: "object", properties: { nested: { $async: true } } },
+  }), /cannot declare async schemas/);
+});
+
+test("keeps legacy Worker entrypoint strings unchanged", () => {
+  const manifest = defineSpsPluginManifest({
+    id: "com.example.legacy-worker-path",
+    apiVersion: 1,
+    version: "1.0.0",
+    displayName: "Legacy worker path",
+    entrypoints: { worker: "worker.mjs" },
+  });
+  assert.equal(manifest.entrypoints.worker, "worker.mjs");
+});

@@ -31,6 +31,70 @@ function assertTarget(value, label) {
   return target;
 }
 
+function entrypointPath(value, label) {
+  const target = nonEmpty(value, label, 512);
+  if (/[\\\u0000-\u001f\u007f]/.test(target) || target.startsWith("/") || target.startsWith("\\")
+    || /^[A-Za-z][A-Za-z0-9+.-]*:/.test(target) || /[?*\[\]{}!#]/.test(target)) {
+    throw new TypeError(`${label} must be a safe relative package path.`);
+  }
+  const relative = target.startsWith("./") ? target.slice(2) : target;
+  if (!relative || relative.split("/").some((segment) => !segment || segment === "." || segment === "..")) {
+    throw new TypeError(`${label} must be a safe relative package path.`);
+  }
+  return target;
+}
+
+function isJsonValue(value, ancestors = new Set()) {
+  if (value === null || typeof value === "string" || typeof value === "boolean") return true;
+  if (typeof value === "number") return Number.isFinite(value);
+  if (Array.isArray(value)) {
+    if (Object.getPrototypeOf(value) !== Array.prototype || ancestors.has(value)) return false;
+    const keys = Reflect.ownKeys(value);
+    if (keys.length !== value.length + 1 || keys.some((key) => key !== "length"
+      && (!/^(?:0|[1-9][0-9]*)$/.test(String(key)) || Number(key) >= value.length))) return false;
+    ancestors.add(value);
+    const valid = Array.from({ length: value.length }, (_, index) => {
+      const descriptor = Object.getOwnPropertyDescriptor(value, String(index));
+      return Boolean(descriptor?.enumerable && "value" in descriptor && isJsonValue(descriptor.value, ancestors));
+    }).every(Boolean);
+    ancestors.delete(value);
+    return valid;
+  }
+  if (!isRecord(value)) return false;
+  const prototype = Object.getPrototypeOf(value);
+  if ((prototype !== Object.prototype && prototype !== null) || ancestors.has(value)) return false;
+  ancestors.add(value);
+  const valid = Reflect.ownKeys(value).every((key) => {
+    if (typeof key !== "string") return false;
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    return Boolean(descriptor?.enumerable && "value" in descriptor && isJsonValue(descriptor.value, ancestors));
+  });
+  ancestors.delete(value);
+  return valid;
+}
+
+function workspaceConfigSchema(value) {
+  if (!isRecord(value) || (Object.getPrototypeOf(value) !== Object.prototype && Object.getPrototypeOf(value) !== null)
+    || !isJsonValue(value)) {
+    throw new TypeError("manifest.workspaceConfigSchema must be a plain JSON object.");
+  }
+  return value;
+}
+
+function containsWorkspaceSecretRef(value) {
+  if (Array.isArray(value)) return value.some(containsWorkspaceSecretRef);
+  if (!isRecord(value)) return false;
+  if (value.format === "secret-ref") return true;
+  return Object.values(value).some(containsWorkspaceSecretRef);
+}
+
+function containsAsyncWorkspaceSchema(value) {
+  if (Array.isArray(value)) return value.some(containsAsyncWorkspaceSchema);
+  if (!isRecord(value)) return false;
+  if (value.$async === true) return true;
+  return Object.values(value).some(containsAsyncWorkspaceSchema);
+}
+
 function validateShell(value) {
   if (!isRecord(value)) throw new TypeError("workspaceShell must be an object.");
   surfaceId(value.id, "workspaceShell.id");
@@ -128,6 +192,22 @@ export function defineSpsPluginManifest(manifest) {
   if (manifest.apiVersion !== 1) throw new TypeError("manifest.apiVersion must be 1.");
   nonEmpty(manifest.version, "manifest.version");
   nonEmpty(manifest.displayName, "manifest.displayName");
+  if (manifest.entrypoints !== undefined) {
+    if (!isRecord(manifest.entrypoints)) throw new TypeError("manifest.entrypoints must be an object.");
+    if (manifest.entrypoints.workspaceWorker !== undefined) entrypointPath(manifest.entrypoints.workspaceWorker, "manifest.entrypoints.workspaceWorker");
+  }
+  if (manifest.workspaceConfigSchema !== undefined) {
+    const configSchema = workspaceConfigSchema(manifest.workspaceConfigSchema);
+    if (typeof manifest.entrypoints?.workspaceWorker !== "string") {
+      throw new TypeError("manifest.workspaceConfigSchema requires manifest.entrypoints.workspaceWorker.");
+    }
+    if (containsWorkspaceSecretRef(configSchema)) {
+      throw new TypeError("manifest.workspaceConfigSchema cannot declare secret-ref fields until Workspace-scoped plugin secrets are supported.");
+    }
+    if (containsAsyncWorkspaceSchema(configSchema)) {
+      throw new TypeError("manifest.workspaceConfigSchema cannot declare async schemas.");
+    }
+  }
   defineSpsWorkspaceSurfaceManifest(manifest);
   const capabilities = manifest.capabilities ?? [];
   if (!Array.isArray(capabilities) || capabilities.some((capability) => typeof capability !== "string")) {

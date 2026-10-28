@@ -1,6 +1,7 @@
 import type { JsonValue, SpsRuntimeOperation, SpsRuntimeTransport } from "@sonparkserver/plugin-sdk/runtime";
 
 export interface SpsPlatformInvocationContext {
+  readonly agents: import("@sonparkserver/plugin-sdk/platform").SpsAgentSessionClient;
   readonly events: { emit(name: string, companyId: string, payload: JsonValue): Promise<void>; };
   readonly state: {
     get(key: Record<string, unknown>): Promise<JsonValue | null>;
@@ -47,6 +48,7 @@ export interface SpsWorkerPlatformContract {
   readonly events: readonly unknown[];
   readonly jobs: readonly unknown[];
   readonly data: readonly unknown[];
+  readonly actions?: readonly unknown[];
 }
 
 export interface SpsWorkerLifecycleContext {

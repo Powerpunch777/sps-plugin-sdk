@@ -1,5 +1,36 @@
 # Changelog
 
+## Unreleased
+
+- Permit the existing `sps.executions.read` capability in portable platform
+  declarations, including model-request Workers that also read common history.
+
+- Add the mock-first public `models.*` Runtime facade and finite Worker RPC
+  names with exact per-operation model capabilities, UUID/text/key validation,
+  and authenticated invocation-company enforcement. This is an unreleased Core
+  dependency; it does not claim provider, backend, cancellation, or pricing support.
+- Add the `model_request` execution-history lane without changing the Profile
+  v2 primitive matrix.
+- Add `agents.describeExecution` through the public Worker bridge with a
+  company-scoped cached configuration/Node-observation descriptor; it does not
+  report permission, login, live readiness, backend availability, or cancel support.
+- Add a bounded public Host support reader for explicitly reported RPC handlers;
+  missing or unsupported reports stay unknown and do not imply permissions or readiness.
+- Add optional read-only cached Node heartbeat/approval metadata to `PluginSpsRuntime`;
+  absence stays unknown and does not prove authentication, socket activity, readiness, or an execution grant.
+- Align `PluginJobContext.companyId?: string` with Workspace-scoped Core Jobs.
+  Legacy Host Jobs still omit this field; no runtime or package version change.
+- Add read-only, company-scoped execution history across Node and Agent Session
+  lanes through the finite Runtime and Worker transports.
+- Add Profile v2 `executions.observe` and its `sps.executions.read` capability
+  mapping, bounded cursor validation, and shared execution/usage DTO types.
+- Preserve usage provenance: adapter-reported values are not verified bills,
+  unavailable evidence is not zero, and subscription-reference costs may not be
+  actual charges.
+- Add read-only execution summaries over bounded UTC createdAt windows, with
+  explicit usage coverage and separate cost bases under the existing
+  `executions.observe` capability.
+
 ## 0.11.0 - 2026-08-01
 
 - Add a public, read-only UI data-provider declaration to the platform contract.
