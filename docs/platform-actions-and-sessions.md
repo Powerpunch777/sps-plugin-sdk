@@ -57,6 +57,9 @@ work and before execution/cancellation mutations. `close`, global Agent
 mutation and arbitrary invocation remain unavailable. A message send still
 has no durable request-key/replay guarantee: do not automatically retry an
 ambiguous send or treat a timeout as evidence that execution never started.
+Authority revocation while an admitted wakeup is awaiting may reject its response
+without undoing a queued/started run; the invocation check is not an ongoing
+provider execution lease or an automatic cancellation request.
 
 The agent-session facade does not offer per-message model overrides.
 `runtime.runs.cancel` applies only to runs dispatched through the SPS Runtime
