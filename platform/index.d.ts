@@ -10,6 +10,15 @@ export const SPS_PLATFORM_CAPABILITIES: readonly [
 export type SpsPlatformCapability = (typeof SPS_PLATFORM_CAPABILITIES)[number];
 export type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
 export type JsonObject = { [key: string]: JsonValue };
+/**
+ * A bounded, redacted, normalized answer owned by the session run. This is
+ * not raw logs or credential fields; common-pattern redaction is not a DLP
+ * guarantee.
+ */
+export type SpsAgentSessionOutput =
+  | { readonly state: "available"; readonly text: string }
+  | { readonly state: "not_ready"; readonly text: null }
+  | { readonly state: "withheld"; readonly text: null; readonly reason: "missing" | "invalid" | "too_large" | "not_successful" };
 export interface SpsStateKey {
   scopeKind: "instance" | "company" | "project" | "project_workspace" | "agent" | "issue" | "thread" | "goal" | "run";
   scopeId?: string;
@@ -29,6 +38,11 @@ export interface SpsAgentSessionRunResult {
   errorCode: string | null;
   error: string | null;
   execution?: SpsExecution;
+  /**
+   * Optional for older Hosts. Absence means the Host did not provide this
+   * field; callers must not treat it as an empty answer.
+   */
+  output?: SpsAgentSessionOutput;
 }
 /** Cached agent adapter configuration and optional Node observation only; this is not permission, login, live/backend readiness, or cancellation support. */
 export interface SpsAgentExecutionDescriptor {
