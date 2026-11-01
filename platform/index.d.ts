@@ -72,6 +72,7 @@ export interface SpsAgentSessionClient {
   describeExecution(agentId: string, companyId: string): Promise<SpsAgentExecutionDescriptor>;
   sessions: {
     create(agentId: string, companyId: string, options?: { taskKey?: string; reason?: string }): Promise<{ sessionId: string }>;
+    ensure(agentId: string, companyId: string, options: { taskKey: string; expectedSessionId?: string }): Promise<{ sessionId: string; created: boolean }>;
     list(agentId: string, companyId: string): Promise<Array<Record<string, JsonValue>>>;
     sendMessage(sessionId: string, companyId: string, options: { prompt: string; reason?: string; onEvent?: (event: Record<string, JsonValue>) => void }): Promise<{ runId: string }>;
     getRun(sessionId: string, companyId: string, runId: string): Promise<SpsAgentSessionRunResult>;

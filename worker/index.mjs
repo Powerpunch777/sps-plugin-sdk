@@ -9,6 +9,7 @@ const PLATFORM_AGENT_OPERATIONS = Object.freeze({
   "agents.list": "agents.read",
   "agents.describeExecution": "agents.read",
   "agents.sessions.create": "agent.sessions.create",
+  "agents.sessions.ensure": "agent.sessions.create",
   "agents.sessions.list": "agent.sessions.list",
   "agents.sessions.sendMessage": "agent.sessions.send",
   "agents.sessions.getRun": "agent.sessions.read",
@@ -334,6 +335,14 @@ export function runSpsWorker(plugin, options = {}) {
       },
       sessions: Object.freeze({
         create(agentId, companyId, options = {}) { return agentRequest("agents.sessions.create", { ...options, agentId, companyId }); },
+        ensure(agentId, companyId, options) {
+          return agentRequest("agents.sessions.ensure", {
+            taskKey: options?.taskKey,
+            ...(options?.expectedSessionId === undefined ? {} : { expectedSessionId: options.expectedSessionId }),
+            agentId,
+            companyId,
+          });
+        },
         list(agentId, companyId) { return agentRequest("agents.sessions.list", { agentId, companyId }); },
         async sendMessage(sessionId, companyId, options) {
           if (options.onEvent) sessionCallbacks.set(sessionId, options.onEvent);

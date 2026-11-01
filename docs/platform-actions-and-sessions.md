@@ -19,6 +19,22 @@ The invocation context also exposes the existing Core Agent session ABI:
 - `agents.list({ companyId, limit })` requires `agents.read`.
 - `agents.sessions.create(agentId, companyId, options)` requires
   `agent.sessions.create`.
+- `agents.sessions.ensure(agentId, companyId, { taskKey, expectedSessionId? })`
+  requires the same `agent.sessions.create` capability and sends the explicit
+  `agents.sessions.ensure` RPC. On a compatible Host it ensures the stable
+  session identified by the exact Workspace, Plugin, Agent, and task key under
+  the current invocation. The Host remains authoritative for task-key validity,
+  ownership, adapter compatibility, and conflicting context. A retained closed session,
+  changed adapter, or conflicting context must fail without returning or
+  creating a replacement. If `expectedSessionId` is supplied, only that exact
+  ID may be recovered; a missing row or a different ID for the key is a review
+  error and must not create a replacement. Without it, the existing ensure
+  behavior may create a session when no row exists. This method has no public
+  invocation-context override. Existing `create` remains a
+  create-new operation and is not changed by `ensure`.
+- The Worker never emulates `ensure` with `create` or `list`. If an older Host
+  does not implement `agents.sessions.ensure`, the RPC fails closed; absence of
+  that Host method is not evidence of safe idempotent behavior.
 - `agents.sessions.list(agentId, companyId)` requires `agent.sessions.list`.
 - `agents.sessions.sendMessage(sessionId, companyId, options)` requires
   `agent.sessions.send`. Legacy Host workers may receive asynchronous chunk,
@@ -49,9 +65,20 @@ or use `plugin:<plugin-id>:session:<plugin-owned-key>` when a stable key is
 needed. A new custom key must have a non-empty suffix, fit 1,024 UTF-8 bytes,
 and contain no invalid Unicode or control characters. Core rejects creation
 outside this namespace; it is not an idempotent session-ensure operation.
+`ensure` is a separate explicit Host operation that must atomically resolve or
+create the exact owned session for that key; it does not provide send-message
+deduplication. Legacy close/reset paths may physically delete the session row.
+Without a durable tombstone, callers that know the prior ID can pass it as
+`expectedSessionId` so compare-and-set recovery cannot silently recreate the
+row. If that deleted key is ensured without `expectedSessionId`, a new row may
+be created; if the expected ID is supplied, the missing row must instead fail.
+This identity check is not a lease: a concurrent close/reset can retire a row
+after lookup, and send must validate the exact session again. An in-memory test
+harness does not prove physical row deletion, database concurrency or
+cross-process recovery.
 
 On compatible development Hosts, the dedicated Workspace lane permits these
-five session methods only inside a current Host-issued invocation, fixed to
+six session methods only inside a current Host-issued invocation, fixed to
 the exact Workspace and plugin. Core rechecks authority around awaited service
 work and before execution/cancellation mutations. `close`, global Agent
 mutation and arbitrary invocation remain unavailable. A message send still

@@ -205,6 +205,82 @@ test("Agent session run methods enforce their dedicated capabilities and invocat
   }
 });
 
+test("Agent session ensure uses the create capability and sends only the explicit ensure RPC", async () => {
+  const recovered = { sessionId: "77777777-7777-4777-8777-777777777777", created: false };
+  const created = { sessionId: "session-new", created: true };
+  const { input, lines, worker } = createHarness(defineSpsPlugin({ platform: defineSpsPlatformContract({
+    capabilities: ["agent.sessions.create"],
+    actions: [{ key: "ensure", handler: async (_params, context) => ({
+      recovered: await context.agents.sessions.ensure("agent-1", "company-1", { taskKey: "plugin:demo:session:main", expectedSessionId: recovered.sessionId }),
+      created: await context.agents.sessions.ensure("agent-1", "company-1", { taskKey: "plugin:demo:session:later" }),
+    }) }],
+  }) }));
+  input.write(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: {} }) + "\n");
+  await eventually(() => lines.length === 1);
+  input.write(JSON.stringify({
+    jsonrpc: "2.0", id: 2, method: "performAction",
+    paperclipInvocation: { id: "inv-ensure", scope: { companyId: "company-1" } },
+    params: { key: "ensure", companyId: "company-1", params: {}, actorContext: { type: "user", companyId: "company-1" } },
+  }) + "\n");
+  await eventually(() => lines.length === 2);
+  assert.deepEqual(lines[1], {
+    jsonrpc: "2.0", id: "sps-1", method: "agents.sessions.ensure",
+    params: { agentId: "agent-1", companyId: "company-1", taskKey: "plugin:demo:session:main", expectedSessionId: recovered.sessionId },
+    paperclipInvocationId: "inv-ensure",
+  });
+  input.write(JSON.stringify({ jsonrpc: "2.0", id: "sps-1", result: recovered }) + "\n");
+  await eventually(() => lines.length === 3);
+  assert.deepEqual(lines[2], {
+    jsonrpc: "2.0", id: "sps-2", method: "agents.sessions.ensure",
+    params: { agentId: "agent-1", companyId: "company-1", taskKey: "plugin:demo:session:later" },
+    paperclipInvocationId: "inv-ensure",
+  });
+  input.write(JSON.stringify({ jsonrpc: "2.0", id: "sps-2", result: created }) + "\n");
+  await eventually(() => lines.length === 4);
+  assert.deepEqual(lines[3], { jsonrpc: "2.0", id: 2, result: { recovered, created } });
+  assert.equal(lines.some(line => line.method === "agents.sessions.create" || line.method === "agents.sessions.list"), false);
+  input.end();
+  await worker.closed;
+});
+
+test("Agent session ensure fails closed when the Host does not support the RPC", async () => {
+  const { input, lines, worker } = createHarness(defineSpsPlugin({ platform: defineSpsPlatformContract({
+    capabilities: ["agent.sessions.create"],
+    actions: [{ key: "ensure", handler: (_params, context) => context.agents.sessions.ensure("agent-1", "company-1", { taskKey: "plugin:demo:session:main" }) }],
+  }) }));
+  input.write(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: {} }) + "\n");
+  await eventually(() => lines.length === 1);
+  input.write(JSON.stringify({
+    jsonrpc: "2.0", id: 2, method: "performAction",
+    params: { key: "ensure", companyId: "company-1", params: {}, actorContext: { type: "user", companyId: "company-1" } },
+  }) + "\n");
+  await eventually(() => lines.length === 2);
+  assert.equal(lines[1].method, "agents.sessions.ensure");
+  input.write(JSON.stringify({ jsonrpc: "2.0", id: lines[1].id, error: { code: -32601, message: "Method not found" } }) + "\n");
+  await eventually(() => lines.length === 3);
+  assert.deepEqual(lines[2].error, { code: -32601, message: "Method not found" });
+  assert.deepEqual(lines.filter(line => line.method?.startsWith("agents.sessions.")).map(line => line.method), ["agents.sessions.ensure"]);
+  input.end();
+  await worker.closed;
+});
+
+test("Agent session ensure is denied without the reused create capability", async () => {
+  const { input, lines, worker } = createHarness(defineSpsPlugin({ platform: defineSpsPlatformContract({
+    actions: [{ key: "ensure", handler: (_params, context) => context.agents.sessions.ensure("agent-1", "company-1", { taskKey: "plugin:demo:session:main" }) }],
+  }) }));
+  input.write(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: {} }) + "\n");
+  await eventually(() => lines.length === 1);
+  input.write(JSON.stringify({
+    jsonrpc: "2.0", id: 2, method: "performAction",
+    params: { key: "ensure", companyId: "company-1", params: {}, actorContext: { type: "user", companyId: "company-1" } },
+  }) + "\n");
+  await eventually(() => lines.length === 2);
+  assert.match(lines[1].error.message, /Undeclared.*agent\.sessions\.create/);
+  assert.equal(lines.some(line => line.method?.startsWith("agents.sessions.")), false);
+  input.end();
+  await worker.closed;
+});
+
 test("model request RPCs use exact payloads and the declared operation-specific capabilities", async () => {
   const companyId = "11111111-1111-4111-8111-111111111111";
   const connectionId = "22222222-2222-4222-8222-222222222222";
