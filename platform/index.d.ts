@@ -52,6 +52,17 @@ export interface SpsAgentSessionRunResult {
    */
   output?: SpsAgentSessionOutput;
 }
+export interface SpsAgentSessionExecutionPolicy {
+  readonly mode: "plugin-tools-only-v1";
+  readonly toolNames: readonly string[];
+}
+export interface SpsAgentSessionPolicySupport {
+  readonly schemaVersion: 1;
+  readonly modes: readonly "plugin-tools-only-v1"[];
+  readonly enforcement: "dispatch-and-run";
+  readonly readiness: "unknown";
+  readonly osIsolation: "not-certified";
+}
 /** Cached agent adapter configuration and optional Node observation only; this is not permission, login, live/backend readiness, or cancellation support. */
 export interface SpsAgentExecutionDescriptor {
   agentId: string;
@@ -82,7 +93,8 @@ export interface SpsAgentSessionClient {
     create(agentId: string, companyId: string, options?: { taskKey?: string; reason?: string }): Promise<{ sessionId: string }>;
     ensure(agentId: string, companyId: string, options: { taskKey: string; expectedSessionId?: string }): Promise<{ sessionId: string; created: boolean }>;
     list(agentId: string, companyId: string): Promise<Array<Record<string, JsonValue>>>;
-    sendMessage(sessionId: string, companyId: string, options: { prompt: string; reason?: string; requestId?: string; onEvent?: (event: Record<string, JsonValue>) => void }): Promise<{ runId: string }>;
+    describePolicySupport?(sessionId: string, companyId: string): Promise<SpsAgentSessionPolicySupport>;
+    sendMessage(sessionId: string, companyId: string, options: { prompt: string; reason?: string; requestId?: string; executionPolicy?: SpsAgentSessionExecutionPolicy; onEvent?: (event: Record<string, JsonValue>) => void }): Promise<{ runId: string }>;
     getRequest(sessionId: string, companyId: string, requestId: string): Promise<null | {
       requestId: string;
       state: "pending" | "submitted" | "uncertain";

@@ -7,6 +7,7 @@ const agentOperations = [
   "agents.describeExecution",
   "agents.list",
   "agents.sessions.create",
+  "agents.sessions.describePolicySupport",
   "agents.sessions.list",
   "agents.sessions.sendMessage",
   "agents.sessions.getRun",

@@ -10,7 +10,7 @@ export const SPS_RUNTIME_OPERATIONS: readonly [
 ];
 
 export const SPS_HOST_OPERATIONS: readonly [
-  "agents.describeExecution", "agents.list", "agents.sessions.cancel", "agents.sessions.create",
+  "agents.describeExecution", "agents.list", "agents.sessions.cancel", "agents.sessions.create", "agents.sessions.describePolicySupport",
   "agents.sessions.getRun", "agents.sessions.list", "agents.sessions.sendMessage",
   "sps.artifacts.list", "sps.artifacts.publish", "sps.connectivity.current", "sps.executionGrants.list",
   "sps.executionGrants.revoke", "sps.executionGrants.upsert", "sps.executions.get",

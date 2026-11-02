@@ -46,6 +46,26 @@ The invocation context also exposes the existing Core Agent session ABI:
   status, done, and error events through `onEvent`; terminal events release the
   callback. The dedicated Workspace worker lane does not provide that legacy
   raw event feed. Use explicit bounded `getRun` polling in that lane.
+- Optional `options.executionPolicy` selects the `plugin-tools-only-v1` mode
+  and an explicit allowlist of 1-32 raw plugin tool names. Input order is
+  accepted; the SDK detaches and sorts names into ASCII order before dispatch.
+  A policy requires a durable `requestId`. This allowlist is authoritative only
+  for plugin tool dispatch; it does not certify OS/filesystem/network isolation
+  or promise readiness. `sessions.describePolicySupport` is an optional Host
+  RPC requiring `agent.sessions.read`. A singleton `modes` list reports that
+  the mode is supported; an empty list reports it unsupported. Neither value
+  proves runtime readiness or OS isolation: compatible Hosts report
+  `readiness: "unknown"` and `osIsolation: "not-certified"`. Older Hosts reject
+  the RPC explicitly; the SDK does not infer support or fall back to an
+  unrestricted send. Codex CLI runtime restrictions are a separate deployment
+  concern and must be configured and verified by the Host. See the official
+  [sandbox security guidance](https://developers.openai.com/api/docs/guides/agents-api/environments/security)
+  and [self-hosted sandbox guidance](https://developers.openai.com/api/docs/guides/agents-api/environments/self-hosted).
+  The initial SPS implementation supports only local Codex CLI sessions using
+  invocation-bound Workspace plugin tools. Legacy Host-worker tools and remote
+  Node execution are not eligible for this mode. Support discovery describes
+  configuration, not a successful CLI probe; a runtime can still reject unsafe
+  command overrides or custom arguments without falling back.
 - On a compatible development Host, an optional `options.requestId` UUID asks
   for a durable dispatch receipt. Keep this ID with the exact session, prompt
   and reason before sending. The SDK normalizes the UUID to lowercase. A keyed
@@ -98,7 +118,7 @@ harness does not prove physical row deletion, database concurrency or
 cross-process recovery.
 
 On compatible development Hosts, the dedicated Workspace lane permits these
-seven session methods only inside a current Host-issued invocation, fixed to
+eight session methods only inside a current Host-issued invocation, fixed to
 the exact Workspace and plugin. Core rechecks authority around awaited service
 work and before execution/cancellation mutations. `close`, global Agent
 mutation and arbitrary invocation remain unavailable. Unkeyed messages still

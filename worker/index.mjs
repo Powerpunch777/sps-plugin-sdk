@@ -14,6 +14,7 @@ const PLATFORM_AGENT_OPERATIONS = Object.freeze({
   "agents.sessions.sendMessage": "agent.sessions.send",
   "agents.sessions.getRequest": "agent.sessions.read",
   "agents.sessions.getRun": "agent.sessions.read",
+  "agents.sessions.describePolicySupport": "agent.sessions.read",
   "agents.sessions.cancel": "agent.sessions.cancel",
 });
 const MODEL_OPERATION_CAPABILITIES = Object.freeze({
@@ -36,6 +37,7 @@ const SURFACE_ID_RE = /^[a-z0-9][a-z0-9._-]*$/;
 const MODEL_UUID_RE = /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i;
 const SESSION_REQUEST_ID_RE = /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i;
 const MODEL_REQUEST_KEY_RE = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
+const PLUGIN_TOOL_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/;
 const MODEL_INPUT_MAX_BYTES = 65_536;
 const STATE_COMPARE_AND_SET_MAX_BYTES = 262_144;
 const STATE_COMPARE_AND_SET_MAX_DEPTH = 64;
@@ -111,23 +113,6 @@ function optionalPlainDataRecord(value, label, allowedKeys) {
     if (typeof key !== "string" || !allowed.has(key)) throw new TypeError(`${label} must contain only ${allowedKeys.join(", ")}.`);
     const descriptor = Object.getOwnPropertyDescriptor(value, key);
     if (!descriptor?.enumerable || !("value" in descriptor)) throw new TypeError(`${label}.${key} must be an enumerable own data property.`);
-    result[key] = descriptor.value;
-  }
-  return result;
-}
-
-function allowedPlainDataRecord(value, label, allowedKeys) {
-  if (!isRecord(value)) throw new TypeError(`${label} must be a plain object.`);
-  const prototype = Object.getPrototypeOf(value);
-  if (prototype !== Object.prototype && prototype !== null) throw new TypeError(`${label} must be a plain object.`);
-  const allowed = new Set(allowedKeys);
-  const result = Object.create(null);
-  for (const key of Reflect.ownKeys(value)) {
-    if (typeof key !== "string" || !allowed.has(key)) throw new TypeError(`${label} must contain only ${allowedKeys.join(", ")}.`);
-    const descriptor = Object.getOwnPropertyDescriptor(value, key);
-    if (!descriptor?.enumerable || !("value" in descriptor)) {
-      throw new TypeError(`${label}.${key} must be an enumerable own data property.`);
-    }
     result[key] = descriptor.value;
   }
   return result;
@@ -423,10 +408,60 @@ export function runSpsWorker(plugin, options = {}) {
           });
         },
         list(agentId, companyId) { return agentRequest("agents.sessions.list", { agentId, companyId }); },
+        describePolicySupport(sessionId, companyId) {
+          let params;
+          try {
+            params = {
+              sessionId: boundedAgentString(sessionId, "sessionId"),
+              companyId: boundedAgentString(companyId, "companyId"),
+            };
+          } catch (cause) {
+            return Promise.reject(cause);
+          }
+          return agentRequest("agents.sessions.describePolicySupport", params, true).then((result) => {
+            const value = exactPlainDataRecord(result, "agent session policy support", [
+              "schemaVersion", "modes", "enforcement", "readiness", "osIsolation",
+            ]);
+            const modes = snapshotJsonValue(value.modes, "agent session policy support modes", { nodes: 0 });
+            if (value.schemaVersion !== 1 || !Array.isArray(modes) || modes.length > 1
+              || modes.some((mode) => mode !== "plugin-tools-only-v1") || value.enforcement !== "dispatch-and-run"
+              || value.readiness !== "unknown" || value.osIsolation !== "not-certified") {
+              throw new TypeError("Invalid agent session policy support result.");
+            }
+            return Object.freeze({
+              schemaVersion: 1,
+              modes: Object.freeze(modes),
+              enforcement: "dispatch-and-run",
+              readiness: "unknown",
+              osIsolation: "not-certified",
+            });
+          });
+        },
         async sendMessage(sessionId, companyId, options) {
           let input;
           try {
-            input = allowedPlainDataRecord(options, "agent session sendMessage options", ["prompt", "reason", "requestId", "onEvent"]);
+            input = optionalPlainDataRecord(options, "agent session sendMessage options", ["prompt", "reason", "requestId", "executionPolicy", "onEvent"]);
+            if (input.executionPolicy !== undefined) {
+              const policy = snapshotJsonValue(input.executionPolicy, "agent session executionPolicy", { nodes: 0 });
+              const value = exactPlainDataRecord(policy, "agent session executionPolicy", ["mode", "toolNames"]);
+              if (value.mode !== "plugin-tools-only-v1" || !Array.isArray(value.toolNames)
+                || value.toolNames.length < 1 || value.toolNames.length > 32) {
+                throw new TypeError("Invalid agent session executionPolicy.");
+              }
+              const seenToolNames = new Set();
+              for (const toolName of value.toolNames) {
+                if (typeof toolName !== "string" || !PLUGIN_TOOL_NAME_RE.test(toolName)) {
+                  throw new TypeError("executionPolicy toolNames must contain raw plugin tool names.");
+                }
+                if (seenToolNames.has(toolName)) throw new TypeError("executionPolicy toolNames must not contain duplicates.");
+                seenToolNames.add(toolName);
+              }
+              const toolNames = [...value.toolNames].sort();
+              input.executionPolicy = Object.freeze({ mode: value.mode, toolNames: Object.freeze(toolNames) });
+            }
+            if (input.executionPolicy !== undefined && input.requestId === undefined) {
+              throw new TypeError("executionPolicy requires a durable requestId.");
+            }
             if (input.requestId !== undefined && (typeof input.prompt !== "string" || !input.prompt.trim()
                 || Buffer.byteLength(input.prompt, "utf8") > 48 * 1024 || /[\u0000\ufffd]/u.test(input.prompt)
                 || input.reason !== undefined && (typeof input.reason !== "string" || Buffer.byteLength(input.reason, "utf8") > 1_024
@@ -446,6 +481,7 @@ export function runSpsWorker(plugin, options = {}) {
               prompt: input.prompt,
               ...(input.reason ? { reason: input.reason } : {}),
               ...(input.requestId === undefined ? {} : { requestId: assertSessionRequestId(input.requestId) }),
+              ...(input.executionPolicy === undefined ? {} : { executionPolicy: input.executionPolicy }),
             });
           } catch (error) { sessionCallbacks.delete(sessionId); throw error; }
         },

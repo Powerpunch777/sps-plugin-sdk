@@ -3,6 +3,7 @@ const HOST_OPERATIONS = [
   "agents.list",
   "agents.sessions.cancel",
   "agents.sessions.create",
+  "agents.sessions.describePolicySupport",
   "agents.sessions.getRun",
   "agents.sessions.list",
   "agents.sessions.sendMessage",

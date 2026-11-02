@@ -255,6 +255,135 @@ test("Agent session request identity is forwarded and request lookup is read-sco
   await worker.closed;
 });
 
+test("Agent session execution policy is snapshotted, validated, and forwarded", async () => {
+  const requestId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+  const executionPolicy = { mode: "plugin-tools-only-v1", toolNames: ["summarize", "search"] };
+  const { input, lines, worker } = createHarness(defineSpsPlugin({ platform: defineSpsPlatformContract({
+    capabilities: ["agent.sessions.send"],
+    actions: [{ key: "send", handler: async (_params, context) => {
+      const sent = context.agents.sessions.sendMessage("session-1", "company-1", { prompt: "hello", requestId, executionPolicy });
+      executionPolicy.toolNames[0] = "mutated";
+      return sent;
+    } }],
+  }) }));
+  input.write(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: {} }) + "\n");
+  await eventually(() => lines.length === 1);
+  input.write(JSON.stringify({
+    jsonrpc: "2.0", id: 2, method: "performAction",
+    paperclipInvocation: { id: "inv-policy-send", scope: { companyId: "company-1" } },
+    params: { key: "send", companyId: "company-1", params: {}, actorContext: { type: "user", companyId: "company-1" } },
+  }) + "\n");
+  await eventually(() => lines.length === 2);
+  assert.deepEqual(lines[1].params, {
+    sessionId: "session-1", companyId: "company-1", prompt: "hello",
+    requestId,
+    executionPolicy: { mode: "plugin-tools-only-v1", toolNames: ["search", "summarize"] },
+  });
+  input.write(JSON.stringify({ jsonrpc: "2.0", id: lines[1].id, result: { runId: "run-1" } }) + "\n");
+  await eventually(() => lines.length === 3);
+  input.end();
+  await worker.closed;
+});
+
+test("Malformed Agent session execution policies are rejected before Host calls", async () => {
+  const policies = [
+    { mode: "unrestricted", toolNames: ["search"] },
+    { mode: "plugin-tools-only-v1", toolNames: [] },
+    { mode: "plugin-tools-only-v1", toolNames: ["search", "search"] },
+    { mode: "plugin-tools-only-v1", toolNames: ["search", "search.docs"] },
+    { mode: "plugin-tools-only-v1", toolNames: ["search.docs", "search"] },
+    { mode: "plugin-tools-only-v1", toolNames: ["plugin:search"] },
+    { mode: "plugin-tools-only-v1", toolNames: ["search".repeat(129)] },
+    { mode: "plugin-tools-only-v1", toolNames: Array.from({ length: 33 }, (_, index) => `tool${String(index).padStart(2, "0")}`) },
+    { mode: "plugin-tools-only-v1", toolNames: [""] },
+    { mode: "plugin-tools-only-v1", toolNames: ["search"], extra: true },
+    { mode: "plugin-tools-only-v1", toolNames: new Array(1) },
+  ];
+  const { input, lines, worker } = createHarness(defineSpsPlugin({ platform: defineSpsPlatformContract({
+    capabilities: ["agent.sessions.send"],
+    actions: [{ key: "invalid", handler: async (_params, context) => {
+      const errors = [];
+      for (const executionPolicy of policies) {
+        try { await context.agents.sessions.sendMessage("session-1", "company-1", { prompt: "hello", executionPolicy }); }
+        catch (cause) { errors.push(cause.message); }
+      }
+      try {
+        await context.agents.sessions.sendMessage("session-1", "company-1", {
+          prompt: "hello", executionPolicy: { mode: "plugin-tools-only-v1", toolNames: ["search"] },
+        });
+      } catch (cause) { errors.push(cause.message); }
+      return errors;
+    } }],
+  }) }));
+  input.write(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: {} }) + "\n");
+  await eventually(() => lines.length === 1);
+  input.write(JSON.stringify({
+    jsonrpc: "2.0", id: 2, method: "performAction",
+    paperclipInvocation: { id: "inv-policy-invalid", scope: { companyId: "company-1" } },
+    params: { key: "invalid", companyId: "company-1", params: {}, actorContext: { type: "user", companyId: "company-1" } },
+  }) + "\n");
+  await eventually(() => lines.length === 2);
+  assert.equal(lines[1].result.length, policies.length + 1);
+  assert.match(lines[1].result.at(-1), /durable requestId/);
+  assert.equal(lines[1].method, undefined);
+  assert.equal(lines[1].result.slice(0, -1).every((message) => /executionPolicy/.test(message)), true);
+  assert.equal(lines.some((line) => line.method === "agents.sessions.sendMessage"), false);
+  input.end();
+  await worker.closed;
+});
+
+test("Agent session policy support is read-scoped, validated, and has no old-Host fallback", async () => {
+  const support = {
+    schemaVersion: 1,
+    modes: ["plugin-tools-only-v1"],
+    enforcement: "dispatch-and-run",
+    readiness: "unknown",
+    osIsolation: "not-certified",
+  };
+  const { input, lines, worker } = createHarness(defineSpsPlugin({ platform: defineSpsPlatformContract({
+    capabilities: ["agent.sessions.read"],
+    actions: [{ key: "support", handler: (_params, context) => context.agents.sessions.describePolicySupport("session-1", "company-1") }],
+  }) }));
+  input.write(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: {} }) + "\n");
+  await eventually(() => lines.length === 1);
+  input.write(JSON.stringify({
+    jsonrpc: "2.0", id: 2, method: "performAction",
+    paperclipInvocation: { id: "inv-policy-support", scope: { companyId: "company-1" } },
+    params: { key: "support", companyId: "company-1", params: {}, actorContext: { type: "user", companyId: "company-1" } },
+  }) + "\n");
+  await eventually(() => lines.length === 2);
+  assert.deepEqual(lines[1], {
+    jsonrpc: "2.0", id: "sps-1", method: "agents.sessions.describePolicySupport",
+    params: { sessionId: "session-1", companyId: "company-1" }, paperclipInvocationId: "inv-policy-support",
+  });
+  input.write(JSON.stringify({ jsonrpc: "2.0", id: lines[1].id, result: support }) + "\n");
+  await eventually(() => lines.length === 3);
+  assert.deepEqual(lines[2].result, support);
+
+  input.write(JSON.stringify({
+    jsonrpc: "2.0", id: 3, method: "performAction",
+    paperclipInvocation: { id: "inv-policy-unsupported", scope: { companyId: "company-1" } },
+    params: { key: "support", companyId: "company-1", params: {}, actorContext: { type: "user", companyId: "company-1" } },
+  }) + "\n");
+  await eventually(() => lines.length === 4);
+  input.write(JSON.stringify({ jsonrpc: "2.0", id: lines[3].id, result: { ...support, modes: [] } }) + "\n");
+  await eventually(() => lines.length === 5);
+  assert.deepEqual(lines[4].result, { ...support, modes: [] });
+
+  input.write(JSON.stringify({
+    jsonrpc: "2.0", id: 4, method: "performAction",
+    paperclipInvocation: { id: "inv-policy-old-host", scope: { companyId: "company-1" } },
+    params: { key: "support", companyId: "company-1", params: {}, actorContext: { type: "user", companyId: "company-1" } },
+  }) + "\n");
+  await eventually(() => lines.length === 6);
+  input.write(JSON.stringify({ jsonrpc: "2.0", id: lines[5].id, error: { message: "Unsupported operation" } }) + "\n");
+  await eventually(() => lines.length === 7);
+  assert.equal(lines[6].error.message, "Unsupported operation");
+  assert.equal(lines.slice(1).filter((line) => line.method === "agents.sessions.sendMessage").length, 0);
+  input.end();
+  await worker.closed;
+});
+
 test("Agent session request lookup requires read capability and the invocation company", async () => {
   const scenarios = [
     { capabilities: ["agent.sessions.send"], companyId: "company-1", expected: /Undeclared.*agent\.sessions\.read/ },
@@ -313,7 +442,7 @@ test("Agent session request IDs and send options are validated before Host calls
   assert.equal(lines[1].method, undefined);
   assert.equal(lines[1].result.length, 9);
   assert.equal(lines[1].result.filter(message => /canonical UUID/.test(message)).length, 4);
-  assert.match(lines[1].result[8], /only prompt, reason, requestId, onEvent/);
+  assert.match(lines[1].result[8], /only prompt, reason, requestId, executionPolicy, onEvent/);
   assert.equal(lines.some(line => line.method?.startsWith("agents.sessions.")), false);
   input.end();
   await worker.closed;
