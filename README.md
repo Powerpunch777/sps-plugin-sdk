@@ -21,6 +21,52 @@ const plan = analyzeSpsPluginDependenciesV1({
 });
 ```
 
+## Workspace Plugin Configuration (source contract)
+
+Plugins can opt in to a dedicated Workspace UI/action worker and declare the
+shape of its Workspace-specific configuration. These fields are additive
+source contracts; they do not imply support in every released Host version.
+
+```js
+import { defineSpsPluginManifest } from "@sonparkserver/plugin-sdk/manifest";
+
+export default defineSpsPluginManifest({
+  id: "com.example.workspace-tool",
+  apiVersion: 1,
+  version: "1.0.0",
+  displayName: "Workspace Tool",
+  entrypoints: {
+    worker: "./worker.mjs",
+    workspaceWorker: "./workspace-worker.mjs",
+  },
+  workspaceConfigSchema: {
+    type: "object",
+    properties: {
+      projectLabel: { type: "string", title: "Project label" },
+      includeArchived: { type: "boolean", default: false },
+    },
+    additionalProperties: false,
+  },
+});
+```
+
+`entrypoints.workspaceWorker` is an optional, safe package-relative path for a
+separate Workspace integration worker. `workspaceConfigSchema` is an optional
+inline JSON Schema object at the manifest top level; it requires
+`entrypoints.workspaceWorker`. Omitting the schema gives that Workspace an
+empty `{}` configuration. Workspace configuration is stored for that plugin
+and Workspace by the Host. It is separate from plugin-wide configuration: the
+Host does not fall back to or copy global settings when Workspace configuration
+is missing. Both the local Workspace UI/action path and Native Workspace UI,
+data, and action calls use the declared dedicated worker lane when present.
+
+Keep this schema to non-secret JSON configuration. `secret-ref` and async
+schemas are rejected; do not put credentials or raw secret values in this
+configuration. This declaration does not provide raw secret storage, arbitrary
+HTTP or SQL access, event subscriptions, worker lifecycle management, or
+tool/Agent capabilities. It also does not claim to sandbox a worker from the
+operating system or network; Host authorization remains authoritative.
+
 This is analysis evidence only. It never installs, downloads, enables,
 disables, deletes, executes, or otherwise changes a plugin. A host product
 must present the report and make any lifecycle decision explicitly.
@@ -64,11 +110,20 @@ file path or credential.
 | `2.0` | Workflow-neutral SPS Core contract | Use for new plugins. |
 
 Profile v2 makes a finite set of technical primitives available: Workspace
-Source metadata and routes, runtime discovery and dispatch, run observation,
-artifact writing, and secret references. A plugin defines its own workflow
-meaning on top of those primitives.
+Source metadata and routes, runtime discovery and dispatch, cross-lane execution
+history and SPS-dispatched run observation/cancellation, artifact writing, and
+secret references. A plugin defines
+its own workflow meaning on top of those primitives.
 
 ## Runtime facade
+
+The `executions.list`, `executions.get`, `executions.summarize`, `models.*`,
+`runs.list`, `runs.cancel`, and `agents.describeExecution` APIs below are unreleased
+pinned-source additions; they are not present in the published
+`@sonparkserver/plugin-sdk` v0.11.0 tag. Consumers need to pin an SDK source
+revision containing these additions. The runtime contract version remains
+`1.0`, but matching protocol versions do not establish Host support.
+Confirm support in the target Host independently before relying on them.
 
 New Worker code can import the explicit public entrypoint:
 
@@ -77,9 +132,71 @@ import { createSpsRuntimeClient, defineSpsRuntimeContract } from "@sonparkserver
 
 const runtime = createSpsRuntimeClient(ctx.spsTransport);
 const declaration = defineSpsRuntimeContract({
-  primitives: ["runtimes.list", "runtimes.dispatch", "runs.observe"],
+  primitives: ["runtimes.list", "runtimes.dispatch", "executions.observe", "runs.observe", "runs.cancel"],
 });
 ```
+
+`runtime.executions.list(companyId, options)` and
+`runtime.executions.get(companyId, lane, runId)` expose read-only, own-plugin
+history across the `node`, `agent_session`, and `model_request` lanes. They require the
+`executions.observe` primitive, which maps to `sps.executions.read`, and the
+Worker rejects reads without a matching authenticated invocation company.
+Listing accepts an optional lane, a limit from 1 through 100, and a cursor
+containing a canonical UTC ISO timestamp with milliseconds, UUID run ID, and
+lane. `get` returns `null` when no matching execution exists. This is history
+observation only: it does not replace either execution engine, add mutations or
+cancellation policy, or introduce a role model.
+
+`runtime.executions.summarize(companyId, { from, to, lane?, agentId? })` uses
+that same read capability and invocation-company scope. The window filters
+`createdAt` with inclusive `from` and exclusive `to`, requires canonical UTC
+timestamps with milliseconds, and may span at most 31 days. Core computes the
+summary from one database snapshot and refuses a matching set above 10,000
+executions rather than returning a partial aggregate. Usage metrics retain
+reported, estimated, and unavailable coverage separately; costs remain split
+into incremental API, subscription-reference, and other bases and must not be
+added together. These are execution-adapter evidence, not invoices; the API
+adds no billing ledger and makes no budget or billing guarantees.
+
+`runtime.models.list(companyId)`, `submit({ companyId, connectionId, requestKey,
+input })`, `get(companyId, runId)`, and `cancel(companyId, runId)` expose the
+mock-first public model-request contract through the exact `sps.models.*`
+Worker RPC names. They require the corresponding `sps.models.read`,
+`sps.models.submit`, or `sps.models.cancel` capability and an authenticated
+invocation company. Identifiers are UUIDs; submit accepts only bounded text
+input and an idempotency request key, never provider endpoints, model overrides,
+credentials, or tools. Declare these capabilities with
+`defineSpsPlatformContract`; this adds no Profile v2 Core primitive. `submit` returns the persisted run request, typically
+queued, and does not wait for model completion. The SDK types describe the
+connection and run DTOs but do not establish support in the current SPS Core
+backend. This addition makes no claim of real-provider execution, cancellation
+outcomes, pricing, or billing evidence; no `secrets.resolve` capability is
+enabled by it. Keep the Core dependency pinned to a revision that explicitly
+implements these operations before relying on them.
+
+For the `model_request` history lane, `runtime.modelSource: "configured"` means
+the model selected by the Host connection, not a model independently reported
+by the provider. The Host owns the HTTP transport (`executionOwner: "host"`);
+inference may still run remotely. A cancelled local request never proves that
+provider work or billing stopped. Current grants and Secret versions may cause
+an older result to be `withheld`, including after a revoke/reapproval cycle.
+
+Usage evidence is deliberately explicit. `reported` means reported by the
+execution adapter, not independently verified billing; `unavailable` is not
+zero. Older history without explicit usage evidence remains unavailable rather
+than being inferred as zero. A cost value with `subscription_reference` basis
+may describe a subscription reference amount, not an actual charge.
+
+`runtime.runs.list(companyId, options)` uses the `runs.observe` primitive and
+accepts optional `subjectKey`, `status`, `limit`, and `beforeId` filters.
+Results are ordered by descending UUID, not chronologically. `beforeId` is an
+opaque run-ID cursor; pass it through as returned rather than parsing or
+constructing it. `limit`, when provided, must be an integer from 1 through 200.
+`runtime.runs.cancel(companyId, runId)` requires `runs.cancel`. A queued run
+may become terminal with status `cancelled`; a claimed or running run reports
+`cancelling` until Node completion is acknowledged. Run statuses remain
+strings so clients can handle future statuses without an SDK version change.
+This operation applies only to SPS-dispatched runs, not agent sessions.
 
 An SPS Desktop Host adapter must inject `ctx.spsTransport` when it launches a
 Worker. The facade sends the existing `sps.*` Worker RPC names and payloads
@@ -90,12 +207,34 @@ directories, Host paths, or credentials. This keeps plugin packages independent
 from private SPS Core checkouts while the Host remains the only authority that
 can route execution.
 
+`readSpsHostSupport(initializeParams)` reads an optional `spsHost` initialize
+report of registered RPC handlers. A missing or unsupported report stays
+`unknown`; this is not evidence of permission, backend availability, login, or
+readiness. Older Hosts are never inferred from their API or Host version.
+
+`runtime.connectivity.current()` is a read-only, capability-gated snapshot of
+the current authenticated Native TLS invocation and its Workspace authorization.
+It reports `verified` only with authenticated-request evidence, or `unavailable`
+without claiming Host identity or authorization. The result includes the
+observation time and excludes network addresses, device details, certificates,
+pins, and credentials. It does not report live socket readiness, enumerate
+other Hosts or Workspaces, grant model or execution access, or provide events.
+Check `readSpsHostSupport` for `sps.connectivity.current` before calling it on
+older Hosts; this feature is additive and unreleased.
+
+`context.agents.describeExecution(agentId, companyId)` is a read-only
+`agents.read` bridge for one agent's cached adapter configuration and optional
+Node observation. Both identifiers must be non-empty strings of at most 160
+characters, and the company must match the authenticated invocation. Its
+descriptor does not establish permission, login, live readiness, backend
+availability, or cancellation support; authorization is rechecked on dispatch.
+
 ## Portable Worker bootstrap
 
 Plugins that need a Worker can use the public `worker` entrypoint without a
 private SPS Core checkout or a Paperclip package. It owns only a small
 newline-delimited JSON-RPC lifecycle: `initialize`, `health`, and `shutdown`.
-It exposes the same finite ten-operation `spsTransport` used by the Runtime
+It exposes the same finite nineteen-operation `spsTransport` used by the Runtime
 facade. Logs must go to stderr; stdout is reserved for JSON-RPC messages.
 The Host receives the Core `InitializeResult` `{ ok: true, supportedMethods }`;
 an `initialize` handler's return value is private setup data, not a protocol
@@ -429,7 +568,7 @@ An intentionally small Profile v2 declaration looks like this:
   },
   "sps": {
     "contractVersion": "2.0",
-    "primitives": ["runtimes.list", "runtimes.dispatch", "runs.observe"]
+    "primitives": ["runtimes.list", "runtimes.dispatch", "runs.observe", "runs.cancel"]
   }
 }
 ```

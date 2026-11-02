@@ -190,7 +190,7 @@ async function testPluginWorker(sourceDirectory) {
     worker.stdin.write(`${JSON.stringify(message)}\n`);
   };
   const respondToRuntime = (request) => {
-    const isList = request.method === "sps.runtimes.list" || request.method === "sps.workspaceSources.list" || request.method === "sps.executionGrants.list" || request.method === "sps.runs.listEvents" || request.method === "sps.artifacts.list";
+    const isList = request.method === "sps.runtimes.list" || request.method === "sps.workspaceSources.list" || request.method === "sps.executionGrants.list" || request.method === "sps.runs.list" || request.method === "sps.runs.listEvents" || request.method === "sps.artifacts.list";
     send(isList
       ? { jsonrpc: "2.0", id: request.id, result: [] }
       : { jsonrpc: "2.0", id: request.id, error: { code: -32003, message: "SPS CLI conformance fixture denies mutating Runtime requests." } });

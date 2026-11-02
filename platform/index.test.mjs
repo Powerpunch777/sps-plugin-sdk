@@ -7,6 +7,7 @@ import {
   defineSpsPlatformContract,
   isJsonValue,
 } from "./index.mjs";
+import { SPS_CORE_PRIMITIVES } from "../profile/extension-profile-v2.mjs";
 
 test("declares the Core-mapped tool, event, job, data, and state surface", () => {
   const tool = async () => ({ content: "ok", data: { ok: true } });
@@ -48,6 +49,33 @@ test("rejects undeclared capabilities, invalid registrations, and duplicate name
   assert.throws(() => defineSpsPlatformContract({ events: [{ name: "changed", handler: true }] }), /event handler/);
   assert.throws(() => defineSpsPlatformContract({ jobs: [{ jobKey: "sync", handler() {} }, { jobKey: "sync", handler() {} }] }), /duplicate/);
   assert.throws(() => defineSpsPlatformContract({ data: [{ key: "status", handler() {} }, { key: "status", handler() {} }] }), /duplicate/);
+});
+
+test("declares bounded agent-session run read and cancellation capabilities", () => {
+  assert.ok(SPS_PLATFORM_CAPABILITIES.includes("agent.sessions.read"));
+  assert.ok(SPS_PLATFORM_CAPABILITIES.includes("agent.sessions.cancel"));
+  const contract = defineSpsPlatformContract({ capabilities: ["agent.sessions.read", "agent.sessions.cancel"] });
+  assert.deepEqual(contract.capabilities, ["agent.sessions.read", "agent.sessions.cancel"]);
+});
+
+test("declares the separate model-request capabilities without adding Core primitives", () => {
+  const capabilities = ["sps.models.read", "sps.models.submit", "sps.models.cancel"];
+  assert.ok(capabilities.every((capability) => SPS_PLATFORM_CAPABILITIES.includes(capability)));
+  assert.ok(capabilities.every((capability) => !SPS_CORE_PRIMITIVES.includes(capability)));
+  assert.deepEqual(defineSpsPlatformContract({ capabilities }).capabilities, capabilities);
+});
+
+test("declares Native connectivity read without adding a transport primitive", () => {
+  assert.ok(SPS_PLATFORM_CAPABILITIES.includes("sps.connectivity.read"));
+  assert.ok(!SPS_CORE_PRIMITIVES.includes("sps.connectivity.read"));
+  assert.deepEqual(defineSpsPlatformContract({ capabilities: ["sps.connectivity.read"] }).capabilities,
+    ["sps.connectivity.read"]);
+});
+
+test("declares common execution reads alongside model requests in a portable Worker", () => {
+  const capabilities = ["sps.models.read", "sps.models.submit", "sps.models.cancel", "sps.executions.read"];
+  assert.deepEqual(defineSpsPlatformContract({ capabilities }).capabilities, capabilities);
+  assert.deepEqual(defineSpsPlatformContract({ capabilities: ["sps.executions.read"] }).capabilities, ["sps.executions.read"]);
 });
 
 test("accepts only finite, acyclic plain JSON payloads", () => {

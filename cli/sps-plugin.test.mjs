@@ -54,7 +54,7 @@ test("inspects a source tree, package, and local Registry without running plugin
   await writeFile(path.join(sourceDirectory, "src", "worker.mjs"), [
     'import { defineSpsPlugin, runSpsWorker } from "@sonparkserver/plugin-sdk/worker";',
     "runSpsWorker(defineSpsPlugin({",
-    '  async initialize({ spsTransport }) { await spsTransport.request("sps.runtimes.list", { companyId: "fixture" }); },',
+    '  async initialize({ spsTransport }) { await spsTransport.request("sps.runtimes.list", { companyId: "fixture" }); await spsTransport.request("sps.runs.list", { companyId: "fixture" }); },',
     '  health() { return { status: "ok" }; },',
     "  shutdown() { return null; },",
     "}));",

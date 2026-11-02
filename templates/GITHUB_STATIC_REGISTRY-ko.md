@@ -1,5 +1,9 @@
 # GitHub Static Registry 발행 템플릿
 
+> 2026-11-02 설계 기준은 [Core/Plugin 경계](../docs/core-plugin-design-baseline-2026-11-02.md)를 따른다.
+> 이 문서는 현재 수동 Registry 운영 도구이며 Marketplace 확장 목표를 철회하거나
+> 사용자 승인 없는 설치·활성화·업데이트를 허용하지 않는다. 코드/API는 변경하지 않는다.
+
 `github-static-registry-publish.yml`은 한 저장소 안에 **SPS Plugin SDK, 플러그인 source, 정적 Registry 폴더**가 함께 있을 때 쓰는 수동 GitHub Actions 템플릿이다. 이 단계는 커뮤니티 Marketplace가 아니라, 서명된 불변 release 파일을 정적 호스팅으로 배포하기 위한 Registry 운영 도구다.
 
 ## 먼저 준비할 것

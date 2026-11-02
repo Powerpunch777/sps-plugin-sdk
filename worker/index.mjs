@@ -4,16 +4,152 @@ import { SPS_RUNTIME_OPERATIONS } from "../runtime/index.mjs";
 
 const RUNTIME_OPERATION_SET = new Set(SPS_RUNTIME_OPERATIONS);
 const LIFECYCLE_METHODS = new Set(["initialize", "health", "shutdown"]);
-const PLATFORM_METHODS = new Set(["executeTool", "onEvent", "runJob", "getData"]);
+const PLATFORM_METHODS = new Set(["executeTool", "onEvent", "runJob", "getData", "performAction"]);
+const PLATFORM_AGENT_OPERATIONS = Object.freeze({
+  "agents.list": "agents.read",
+  "agents.describeExecution": "agents.read",
+  "agents.sessions.create": "agent.sessions.create",
+  "agents.sessions.ensure": "agent.sessions.create",
+  "agents.sessions.list": "agent.sessions.list",
+  "agents.sessions.sendMessage": "agent.sessions.send",
+  "agents.sessions.getRequest": "agent.sessions.read",
+  "agents.sessions.getRun": "agent.sessions.read",
+  "agents.sessions.describePolicySupport": "agent.sessions.read",
+  "agents.sessions.cancel": "agent.sessions.cancel",
+});
+const MODEL_OPERATION_CAPABILITIES = Object.freeze({
+  "sps.models.list": "sps.models.read",
+  "sps.models.submit": "sps.models.submit",
+  "sps.models.get": "sps.models.read",
+  "sps.models.cancel": "sps.models.cancel",
+});
+const CONNECTIVITY_OPERATION_CAPABILITIES = Object.freeze({
+  "sps.connectivity.current": "sps.connectivity.read",
+});
 const PLATFORM_HOST_OPERATIONS = new Set([
-  "state.get", "state.set", "state.delete", "events.emit", "events.subscribe",
+  "state.get", "state.set", "state.compareAndSet", "state.delete", "events.emit", "events.subscribe",
   "inbox.publish", "inbox.update", "inbox.withdraw",
+  ...Object.keys(PLATFORM_AGENT_OPERATIONS),
 ]);
+const EXECUTION_READ_OPERATIONS = new Set(["sps.executions.list", "sps.executions.get", "sps.executions.summarize"]);
 const JSON_RPC_VERSION = "2.0";
 const SURFACE_ID_RE = /^[a-z0-9][a-z0-9._-]*$/;
+const MODEL_UUID_RE = /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i;
+const SESSION_REQUEST_ID_RE = /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i;
+const MODEL_REQUEST_KEY_RE = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
+const PLUGIN_TOOL_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/;
+const MODEL_INPUT_MAX_BYTES = 65_536;
+const STATE_COMPARE_AND_SET_MAX_BYTES = 262_144;
+const STATE_COMPARE_AND_SET_MAX_DEPTH = 64;
+const STATE_COMPARE_AND_SET_MAX_NODES = 50_000;
+
+function snapshotJsonValue(value, label, budget, depth = 0, ancestors = new Set()) {
+  if (depth > STATE_COMPARE_AND_SET_MAX_DEPTH) throw new TypeError(`${label} exceeds the JSON depth limit of ${STATE_COMPARE_AND_SET_MAX_DEPTH}.`);
+  budget.nodes += 1;
+  if (budget.nodes > STATE_COMPARE_AND_SET_MAX_NODES) throw new TypeError(`${label} exceeds the JSON node limit of ${STATE_COMPARE_AND_SET_MAX_NODES}.`);
+  if (value === null || typeof value === "string" || typeof value === "boolean") return value;
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (!value || typeof value !== "object" || ancestors.has(value)) throw new TypeError(`${label} must be a finite, acyclic plain JSON value.`);
+  ancestors.add(value);
+  let snapshot;
+  if (Array.isArray(value)) {
+    if (Object.getPrototypeOf(value) !== Array.prototype) throw new TypeError(`${label} must be a finite, acyclic plain JSON value.`);
+    snapshot = [];
+    const keys = Reflect.ownKeys(value);
+    if (keys.length !== value.length + 1 || keys.some((key) => key !== "length" && (typeof key !== "string" || !/^(0|[1-9][0-9]*)$/.test(key) || Number(key) >= value.length))) {
+      throw new TypeError(`${label} must be a finite, acyclic plain JSON value.`);
+    }
+    for (let index = 0; index < value.length; index += 1) {
+      const descriptor = Object.getOwnPropertyDescriptor(value, String(index));
+      if (!descriptor?.enumerable || !("value" in descriptor)) throw new TypeError(`${label} must be a finite, acyclic plain JSON value.`);
+      snapshot.push(snapshotJsonValue(descriptor.value, label, budget, depth + 1, ancestors));
+    }
+  } else {
+    const prototype = Object.getPrototypeOf(value);
+    if (prototype !== Object.prototype && prototype !== null) throw new TypeError(`${label} must be a finite, acyclic plain JSON value.`);
+    snapshot = Object.create(null);
+    for (const key of Reflect.ownKeys(value)) {
+      if (typeof key !== "string") throw new TypeError(`${label} must be a finite, acyclic plain JSON value.`);
+      const descriptor = Object.getOwnPropertyDescriptor(value, key);
+      if (!descriptor?.enumerable || !("value" in descriptor)) throw new TypeError(`${label}.${key} must be an enumerable own data property.`);
+      snapshot[key] = snapshotJsonValue(descriptor.value, label, budget, depth + 1, ancestors);
+    }
+  }
+  ancestors.delete(value);
+  return snapshot;
+}
 
 function isRecord(value) {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function exactPlainDataRecord(value, label, allowedKeys) {
+  if (!isRecord(value)) throw new TypeError(`${label} must be a plain object.`);
+  const prototype = Object.getPrototypeOf(value);
+  if (prototype !== Object.prototype && prototype !== null) throw new TypeError(`${label} must be a plain object.`);
+  const keys = Reflect.ownKeys(value);
+  const allowed = new Set(allowedKeys);
+  if (keys.length !== allowed.size || keys.some((key) => typeof key !== "string" || !allowed.has(key))) {
+    throw new TypeError(`${label} must contain only ${allowedKeys.join(", ")}.`);
+  }
+  const result = Object.create(null);
+  for (const key of keys) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    if (!descriptor?.enumerable || !("value" in descriptor)) {
+      throw new TypeError(`${label}.${key} must be an enumerable own data property.`);
+    }
+    result[key] = descriptor.value;
+  }
+  return result;
+}
+
+function optionalPlainDataRecord(value, label, allowedKeys) {
+  if (!isRecord(value)) throw new TypeError(`${label} must be a plain object.`);
+  const prototype = Object.getPrototypeOf(value);
+  if (prototype !== Object.prototype && prototype !== null) throw new TypeError(`${label} must be a plain object.`);
+  const allowed = new Set(allowedKeys);
+  const result = Object.create(null);
+  for (const key of Reflect.ownKeys(value)) {
+    if (typeof key !== "string" || !allowed.has(key)) throw new TypeError(`${label} must contain only ${allowedKeys.join(", ")}.`);
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    if (!descriptor?.enumerable || !("value" in descriptor)) throw new TypeError(`${label}.${key} must be an enumerable own data property.`);
+    result[key] = descriptor.value;
+  }
+  return result;
+}
+
+function normalizeModelUuid(value, label) {
+  if (typeof value !== "string" || value.length !== 36 || !MODEL_UUID_RE.test(value)) throw new TypeError(`${label} must be a UUID.`);
+  return value.toLowerCase();
+}
+
+function normalizeModelRequest(operation, value) {
+  if (operation === "sps.models.list") {
+    const input = exactPlainDataRecord(value, "model list input", ["companyId"]);
+    return { companyId: normalizeModelUuid(input.companyId, "companyId") };
+  }
+  if (operation === "sps.models.submit") {
+    const input = exactPlainDataRecord(value, "model request input", ["companyId", "connectionId", "requestKey", "input"]);
+    const requestText = input.input;
+    if (typeof requestText !== "string" || requestText.trim().length === 0 || requestText.length > MODEL_INPUT_MAX_BYTES ||
+      new TextEncoder().encode(requestText).byteLength > MODEL_INPUT_MAX_BYTES) {
+      throw new TypeError("input must be a non-empty string of at most 65536 UTF-8 bytes.");
+    }
+    if (typeof input.requestKey !== "string" || input.requestKey.length > 128 || /[\r\n\u2028\u2029]/.test(input.requestKey) || !MODEL_REQUEST_KEY_RE.test(input.requestKey)) {
+      throw new TypeError("requestKey must match /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.");
+    }
+    return {
+      companyId: normalizeModelUuid(input.companyId, "companyId"),
+      connectionId: normalizeModelUuid(input.connectionId, "connectionId"),
+      requestKey: input.requestKey,
+      input: requestText,
+    };
+  }
+  const input = exactPlainDataRecord(value, "model run input", ["companyId", "runId"]);
+  return {
+    companyId: normalizeModelUuid(input.companyId, "companyId"),
+    runId: normalizeModelUuid(input.runId, "runId"),
+  };
 }
 
 function isJsonValue(value, ancestors = new Set()) {
@@ -94,7 +230,9 @@ export function runSpsWorker(plugin, options = {}) {
   let closed = false;
   let lifecycleState = "new";
   const pending = new Map();
+  const sessionCallbacks = new Map();
   const invocationStorage = new AsyncLocalStorage();
+  const agentTenantStorage = new AsyncLocalStorage();
   const controller = new AbortController();
   let resolveClosed;
   const closedPromise = new Promise((resolve) => { resolveClosed = resolve; });
@@ -111,6 +249,7 @@ export function runSpsWorker(plugin, options = {}) {
     controller.abort(reason);
     for (const { reject } of pending.values()) reject(reason);
     pending.clear();
+    sessionCallbacks.clear();
     reader.close();
     input.pause?.();
     resolveClosed();
@@ -142,11 +281,236 @@ export function runSpsWorker(plugin, options = {}) {
       if (!RUNTIME_OPERATION_SET.has(operation)) {
         return Promise.reject(new TypeError(`Unsupported SPS Runtime operation: ${String(operation)}.`));
       }
+      const modelCapability = MODEL_OPERATION_CAPABILITIES[operation];
+      if (modelCapability) {
+        if (!definition.handlers.platform?.capabilities.includes(modelCapability)) {
+          return Promise.reject(new Error(`Undeclared SPS Platform capability: ${modelCapability}.`));
+        }
+        if (lifecycleState !== "ready") {
+          return Promise.reject(new Error("SPS model access requires an authenticated invocation company."));
+        }
+        const invocation = invocationStorage.getStore();
+        if (!invocation || typeof invocation.scope?.companyId !== "string") {
+          return Promise.reject(new Error("SPS model access must match the authenticated invocation company."));
+        }
+        let normalizedInput;
+        let invocationCompanyId;
+        try {
+          normalizedInput = normalizeModelRequest(operation, inputValue);
+          invocationCompanyId = normalizeModelUuid(invocation.scope.companyId, "authenticated invocation company");
+        } catch (cause) {
+          return Promise.reject(cause);
+        }
+        const tenant = agentTenantStorage.getStore();
+        let tenantCompanyId = invocationCompanyId;
+        try {
+          if (typeof tenant?.companyId === "string") tenantCompanyId = normalizeModelUuid(tenant.companyId, "invocation tenant company");
+          if (typeof tenant?.invocationCompanyId === "string" &&
+            normalizeModelUuid(tenant.invocationCompanyId, "authenticated invocation company") !== invocationCompanyId) {
+            return Promise.reject(new Error("SPS model access must match the authenticated invocation company."));
+          }
+        } catch (cause) {
+          return Promise.reject(cause);
+        }
+        if (normalizedInput.companyId !== invocationCompanyId || tenantCompanyId !== invocationCompanyId) {
+          return Promise.reject(new Error("SPS model access must match the authenticated invocation company."));
+        }
+        return callHost(operation, normalizedInput);
+      }
+      const connectivityCapability = CONNECTIVITY_OPERATION_CAPABILITIES[operation];
+      if (connectivityCapability) {
+        if (!definition.handlers.platform?.capabilities.includes(connectivityCapability)) {
+          return Promise.reject(new Error(`Undeclared SPS Platform capability: ${connectivityCapability}.`));
+        }
+        if (lifecycleState !== "ready") {
+          return Promise.reject(new Error("SPS connectivity access requires an authenticated invocation company."));
+        }
+        const invocation = invocationStorage.getStore();
+        if (!invocation || typeof invocation.scope?.companyId !== "string") {
+          return Promise.reject(new Error("SPS connectivity access requires an authenticated invocation company."));
+        }
+        try {
+          exactPlainDataRecord(inputValue, "connectivity current input", []);
+          normalizeModelUuid(invocation.scope.companyId, "authenticated invocation company");
+        } catch (cause) {
+          return Promise.reject(cause);
+        }
+        return callHost(operation, {});
+      }
+      if (EXECUTION_READ_OPERATIONS.has(operation)) {
+        const requestedCompanyId = isRecord(inputValue) ? inputValue.companyId : undefined;
+        const invocationCompanyId = invocationStorage.getStore()?.scope?.companyId;
+        if (typeof requestedCompanyId !== "string" || requestedCompanyId.length === 0 ||
+          typeof invocationCompanyId !== "string" || invocationCompanyId.length === 0 ||
+          requestedCompanyId !== invocationCompanyId) {
+          return Promise.reject(new Error("SPS execution access must match the authenticated invocation company."));
+        }
+      }
       return callHost(operation, inputValue);
     },
   });
 
+  function agentRequest(operation, params, requireTenant = false) {
+    const capability = Object.hasOwn(PLATFORM_AGENT_OPERATIONS, operation) ? PLATFORM_AGENT_OPERATIONS[operation] : undefined;
+    if (!capability) {
+      return Promise.reject(new TypeError(`Unsupported SPS Agent operation: ${String(operation)}.`));
+    }
+    if (!definition.handlers.platform?.capabilities.includes(capability)) {
+      return Promise.reject(new Error(`Undeclared SPS Platform capability: ${capability}.`));
+    }
+    if (requireTenant) {
+      const tenant = agentTenantStorage.getStore();
+      const companyId = typeof tenant?.companyId === "string" ? tenant.companyId : tenant?.invocationCompanyId;
+      if (typeof companyId !== "string" || companyId.length === 0 || params.companyId !== companyId ||
+        (typeof tenant?.companyId === "string" && typeof tenant?.invocationCompanyId === "string" && tenant.companyId !== tenant.invocationCompanyId)) {
+        return Promise.reject(new Error("SPS Agent access must match the authenticated invocation company."));
+      }
+    }
+    return callHost(operation, params);
+  }
+  function boundedAgentString(value, label) {
+    if (typeof value !== "string" || value.trim().length === 0 || value.length > 160) {
+      throw new TypeError(`${label} must be a non-empty string of at most 160 characters.`);
+    }
+    return value;
+  }
+  function assertSessionRequestId(value, label = "requestId") {
+    if (typeof value !== "string" || value.length !== 36 || !SESSION_REQUEST_ID_RE.test(value)) {
+      throw new TypeError(`${label} must be a canonical UUID.`);
+    }
+    return value.toLowerCase();
+  }
+  function withAgentTenant(companyId, handler) {
+    const invocationCompanyId = invocationStorage.getStore()?.scope?.companyId;
+    return agentTenantStorage.run({ companyId, invocationCompanyId }, handler);
+  }
   const platform = Object.freeze({
+    agents: Object.freeze({
+      list(input) { return agentRequest("agents.list", input); },
+      describeExecution(agentId, companyId) {
+        try {
+          return agentRequest("agents.describeExecution", {
+            agentId: boundedAgentString(agentId, "agentId"),
+            companyId: boundedAgentString(companyId, "companyId"),
+          }, true);
+        } catch (cause) {
+          return Promise.reject(cause);
+        }
+      },
+      sessions: Object.freeze({
+        create(agentId, companyId, options = {}) { return agentRequest("agents.sessions.create", { ...options, agentId, companyId }); },
+        ensure(agentId, companyId, options) {
+          return agentRequest("agents.sessions.ensure", {
+            taskKey: options?.taskKey,
+            ...(options?.expectedSessionId === undefined ? {} : { expectedSessionId: options.expectedSessionId }),
+            agentId,
+            companyId,
+          });
+        },
+        list(agentId, companyId) { return agentRequest("agents.sessions.list", { agentId, companyId }); },
+        describePolicySupport(sessionId, companyId) {
+          let params;
+          try {
+            params = {
+              sessionId: boundedAgentString(sessionId, "sessionId"),
+              companyId: boundedAgentString(companyId, "companyId"),
+            };
+          } catch (cause) {
+            return Promise.reject(cause);
+          }
+          return agentRequest("agents.sessions.describePolicySupport", params, true).then((result) => {
+            const value = exactPlainDataRecord(result, "agent session policy support", [
+              "schemaVersion", "modes", "enforcement", "readiness", "osIsolation",
+            ]);
+            const modes = snapshotJsonValue(value.modes, "agent session policy support modes", { nodes: 0 });
+            if (value.schemaVersion !== 1 || !Array.isArray(modes) || modes.length > 1
+              || modes.some((mode) => mode !== "plugin-tools-only-v1") || value.enforcement !== "dispatch-and-run"
+              || value.readiness !== "unknown" || value.osIsolation !== "not-certified") {
+              throw new TypeError("Invalid agent session policy support result.");
+            }
+            return Object.freeze({
+              schemaVersion: 1,
+              modes: Object.freeze(modes),
+              enforcement: "dispatch-and-run",
+              readiness: "unknown",
+              osIsolation: "not-certified",
+            });
+          });
+        },
+        async sendMessage(sessionId, companyId, options) {
+          let input;
+          try {
+            input = optionalPlainDataRecord(options, "agent session sendMessage options", ["prompt", "reason", "requestId", "executionPolicy", "onEvent"]);
+            if (input.executionPolicy !== undefined) {
+              const policy = snapshotJsonValue(input.executionPolicy, "agent session executionPolicy", { nodes: 0 });
+              const value = exactPlainDataRecord(policy, "agent session executionPolicy", ["mode", "toolNames"]);
+              if (value.mode !== "plugin-tools-only-v1" || !Array.isArray(value.toolNames)
+                || value.toolNames.length < 1 || value.toolNames.length > 32) {
+                throw new TypeError("Invalid agent session executionPolicy.");
+              }
+              const seenToolNames = new Set();
+              for (const toolName of value.toolNames) {
+                if (typeof toolName !== "string" || !PLUGIN_TOOL_NAME_RE.test(toolName)) {
+                  throw new TypeError("executionPolicy toolNames must contain raw plugin tool names.");
+                }
+                if (seenToolNames.has(toolName)) throw new TypeError("executionPolicy toolNames must not contain duplicates.");
+                seenToolNames.add(toolName);
+              }
+              const toolNames = [...value.toolNames].sort();
+              input.executionPolicy = Object.freeze({ mode: value.mode, toolNames: Object.freeze(toolNames) });
+            }
+            if (input.executionPolicy !== undefined && input.requestId === undefined) {
+              throw new TypeError("executionPolicy requires a durable requestId.");
+            }
+            if (input.requestId !== undefined && (typeof input.prompt !== "string" || !input.prompt.trim()
+                || Buffer.byteLength(input.prompt, "utf8") > 48 * 1024 || /[\u0000\ufffd]/u.test(input.prompt)
+                || input.reason !== undefined && (typeof input.reason !== "string" || Buffer.byteLength(input.reason, "utf8") > 1_024
+                  || /[\u0000-\u001f\u007f\ufffd]/u.test(input.reason))
+                || typeof input.requestId !== "string" || !SESSION_REQUEST_ID_RE.test(input.requestId))
+              || (input.onEvent !== undefined && typeof input.onEvent !== "function")) {
+              throw new TypeError("Invalid agent session sendMessage options.");
+            }
+          } catch (cause) {
+            return Promise.reject(cause);
+          }
+          if (input.onEvent) sessionCallbacks.set(sessionId, input.onEvent);
+          try {
+            return await agentRequest("agents.sessions.sendMessage", {
+              sessionId,
+              companyId,
+              prompt: input.prompt,
+              ...(input.reason ? { reason: input.reason } : {}),
+              ...(input.requestId === undefined ? {} : { requestId: assertSessionRequestId(input.requestId) }),
+              ...(input.executionPolicy === undefined ? {} : { executionPolicy: input.executionPolicy }),
+            });
+          } catch (error) { sessionCallbacks.delete(sessionId); throw error; }
+        },
+        getRequest(sessionId, companyId, requestId) {
+          try {
+            const params = {
+              sessionId: boundedAgentString(sessionId, "sessionId"),
+              companyId: boundedAgentString(companyId, "companyId"),
+              requestId: assertSessionRequestId(requestId),
+            };
+            return agentRequest("agents.sessions.getRequest", params, true).then((result) => {
+              if (result === null) return null;
+              const value = exactPlainDataRecord(result, "agent session request result", ["requestId", "state", "runId"]);
+              const returnedId = assertSessionRequestId(value.requestId, "result.requestId");
+              if (returnedId !== params.requestId || !["pending", "submitted", "uncertain"].includes(value.state)
+                || value.state === "submitted" && (typeof value.runId !== "string" || !SESSION_REQUEST_ID_RE.test(value.runId))
+                || value.state !== "submitted" && value.runId !== null) {
+                throw new TypeError("Invalid agent session request result.");
+              }
+              return { requestId: returnedId, state: value.state, runId: value.runId };
+            });
+          } catch (cause) {
+            return Promise.reject(cause);
+          }
+        },
+        getRun(sessionId, companyId, runId) { return agentRequest("agents.sessions.getRun", { sessionId, companyId, runId }, true); },
+        cancel(sessionId, companyId, runId) { return agentRequest("agents.sessions.cancel", { sessionId, companyId, runId }, true); },
+      }),
+    }),
     events: Object.freeze({
       emit(name, companyId, payload) {
         if (typeof name !== "string" || name.length === 0 || typeof companyId !== "string" || companyId.length === 0 || !isJsonValue(payload)) {
@@ -160,6 +524,60 @@ export function runSpsWorker(plugin, options = {}) {
       set(key, value) {
         if (!isJsonValue(value)) return Promise.reject(new TypeError("SPS Platform state values must be JSON-serializable."));
         return callHost("state.set", { ...validateStateKey(key), value });
+      },
+      async compareAndSet(key, expected, value) {
+        const capabilities = definition.handlers.platform?.capabilities ?? [];
+        for (const capability of ["plugin.state.read", "plugin.state.write"]) {
+          if (!capabilities.includes(capability)) throw new Error(`Undeclared SPS Platform capability: ${capability}.`);
+        }
+        if (lifecycleState !== "ready") throw new Error("SPS Platform state access requires an authenticated invocation company.");
+
+        const invocation = invocationStorage.getStore();
+        if (typeof invocation?.scope?.companyId !== "string") throw new Error("SPS Platform state access requires an authenticated invocation company.");
+        const invocationCompanyId = normalizeModelUuid(invocation.scope.companyId, "authenticated invocation company");
+        const tenant = agentTenantStorage.getStore();
+        const tenantCompanyId = typeof tenant?.companyId === "string"
+          ? normalizeModelUuid(tenant.companyId, "invocation tenant company")
+          : invocationCompanyId;
+        const tenantInvocationCompanyId = typeof tenant?.invocationCompanyId === "string"
+          ? normalizeModelUuid(tenant.invocationCompanyId, "authenticated invocation company")
+          : invocationCompanyId;
+
+        const keyInput = optionalPlainDataRecord(key, "state key", ["scopeKind", "scopeId", "namespace", "stateKey"]);
+        const normalizedKey = validateStateKey(keyInput);
+        if (normalizedKey.scopeKind !== "company" || typeof normalizedKey.scopeId !== "string") {
+          throw new TypeError("SPS Platform state compareAndSet supports only company-scoped keys with a canonical UUID scopeId.");
+        }
+        const canonicalScopeId = normalizeModelUuid(normalizedKey.scopeId, "state key scopeId");
+        if (canonicalScopeId !== normalizedKey.scopeId) throw new TypeError("state key scopeId must be a lowercase canonical UUID.");
+        if (normalizedKey.stateKey.trim().length === 0 || normalizedKey.namespace !== undefined && normalizedKey.namespace.trim().length === 0) {
+          throw new TypeError("SPS Platform state key and namespace must not be empty or whitespace.");
+        }
+        if (normalizedKey.stateKey.length > 256 || normalizedKey.namespace !== undefined && normalizedKey.namespace.length > 256) {
+          throw new TypeError("SPS Platform state key and namespace must be at most 256 characters.");
+        }
+        if (normalizedKey.scopeId !== invocationCompanyId || tenantCompanyId !== invocationCompanyId || tenantInvocationCompanyId !== invocationCompanyId) {
+          throw new Error("SPS Platform state access must match the authenticated invocation company.");
+        }
+
+        const expectedInput = optionalPlainDataRecord(expected, "state expected value", ["exists", "value"]);
+        let normalizedExpected;
+        const jsonBudget = { nodes: 0 };
+        if (expectedInput.exists === false && Object.keys(expectedInput).length === 1) {
+          normalizedExpected = { exists: false };
+        } else if (expectedInput.exists === true && Object.hasOwn(expectedInput, "value")) {
+          normalizedExpected = { exists: true, value: snapshotJsonValue(expectedInput.value, "state expected value", jsonBudget) };
+        } else {
+          throw new TypeError("state expected value must be { exists: false } or { exists: true, value }.");
+        }
+        const normalizedValue = snapshotJsonValue(value, "SPS Platform state value", jsonBudget);
+        const params = { ...normalizedKey, expected: normalizedExpected, value: normalizedValue };
+        if (new TextEncoder().encode(JSON.stringify(params)).byteLength > STATE_COMPARE_AND_SET_MAX_BYTES) {
+          throw new TypeError("SPS Platform state compareAndSet payload must be at most 262144 UTF-8 bytes.");
+        }
+        const result = exactPlainDataRecord(await callHost("state.compareAndSet", params), "state compareAndSet result", ["swapped"]);
+        if (typeof result.swapped !== "boolean") throw new TypeError("SPS Host returned an invalid state compareAndSet result.");
+        return { swapped: result.swapped };
       },
       delete(key) { return callHost("state.delete", validateStateKey(key)); },
     }),
@@ -274,6 +692,15 @@ export function runSpsWorker(plugin, options = {}) {
   }
 
   async function dispatchPlatformMethod(method, params) {
+    if (method === "performAction") {
+      if (!isRecord(params) || typeof params.key !== "string" || !isRecord(params.params ?? {}) || !isJsonValue(params.params ?? {})
+        || !isRecord(params.actorContext) || typeof params.actorContext.companyId !== "string"
+        || !["user", "agent", "system"].includes(params.actorContext.type)
+        || (params.companyId !== undefined && params.actorContext.companyId !== params.companyId)) throw new TypeError("Invalid authenticated performAction context.");
+      const registration = definition.handlers.platform?.actions?.find(action => action.key === params.key);
+      if (!registration) throw Object.assign(new Error(`Unknown SPS Platform action: ${params.key}.`), { code: -32601 });
+      return withAgentTenant(params.actorContext.companyId, () => registration.handler(params.params ?? {}, { ...platform, companyId: params.actorContext.companyId, actor: Object.freeze({ ...params.actorContext }) }));
+    }
     if (method === "getData") {
       if (!isRecord(params) || typeof params.key !== "string" || !isRecord(params.params ?? {}) || !isJsonValue(params.params ?? {}) ||
         (params.companyId !== undefined && typeof params.companyId !== "string") ||
@@ -282,29 +709,31 @@ export function runSpsWorker(plugin, options = {}) {
       }
       const registration = definition.handlers.platform?.data.find((provider) => provider.key === params.key);
       if (!registration) throw Object.assign(new Error(`Unknown SPS Platform data provider: ${params.key}`), { code: -32601 });
-      return registration.handler({
+      return withAgentTenant(params.companyId, () => registration.handler({
         ...(params.params ?? {}),
         ...(params.companyId === undefined ? {} : { companyId: params.companyId }),
         ...(params.renderEnvironment === undefined ? {} : { renderEnvironment: params.renderEnvironment }),
-      }, platform);
+      }, platform));
     }
     if (method === "executeTool") {
       if (!isRecord(params) || typeof params.toolName !== "string" || !isJsonValue(params.parameters) || !isJsonValue(params.runContext)) throw new TypeError("Invalid executeTool params.");
       const registration = definition.handlers.platform?.tools.find((tool) => tool.name === params.toolName);
       if (!registration) throw Object.assign(new Error(`Unknown SPS Platform tool: ${params.toolName}.`), { code: -32601 });
-      return registration.handler(params.parameters, params.runContext, platform);
+      return withAgentTenant(params.runContext.companyId, () => registration.handler(params.parameters, params.runContext, platform));
     }
     if (method === "onEvent") {
       if (!isRecord(params) || !isRecord(params.event) || typeof params.event.eventType !== "string" || !isJsonValue(params.event)) throw new TypeError("Invalid onEvent params.");
       const registrations = definition.handlers.platform?.events.filter((event) => event.name === params.event.eventType) ?? [];
       if (registrations.length === 0) throw Object.assign(new Error(`Unknown SPS Platform event: ${params.event.eventType}.`), { code: -32601 });
-      for (const registration of registrations) await registration.handler(params.event, platform);
+      for (const registration of registrations) {
+        await withAgentTenant(params.event.companyId, () => registration.handler(params.event, platform));
+      }
       return null;
     }
     if (!isRecord(params) || !isRecord(params.job) || typeof params.job.jobKey !== "string" || !isJsonValue(params.job)) throw new TypeError("Invalid runJob params.");
     const registration = definition.handlers.platform?.jobs.find((job) => job.jobKey === params.job.jobKey);
     if (!registration) throw Object.assign(new Error(`Unknown SPS Platform job: ${params.job.jobKey}.`), { code: -32601 });
-    return registration.handler(params.job, platform);
+    return withAgentTenant(params.job.companyId, () => registration.handler(params.job, platform));
   }
 
   async function handleHostRequest(message) {
@@ -331,6 +760,7 @@ export function runSpsWorker(plugin, options = {}) {
         if (definition.handlers.platform) {
           supportedMethods.push("executeTool", "onEvent", "runJob");
           if (definition.handlers.platform.data.length > 0) supportedMethods.push("getData");
+          if (definition.handlers.platform.actions?.length > 0) supportedMethods.push("performAction");
         }
         sendResponse(id, { ok: true, supportedMethods });
       } catch (cause) {
@@ -377,6 +807,14 @@ export function runSpsWorker(plugin, options = {}) {
   }
 
   async function handleHostNotification(message) {
+    if (message.method === "agents.sessions.event") {
+      const event = message.params;
+      if (lifecycleState !== "ready" || !isRecord(event) || typeof event.sessionId !== "string" || !isJsonValue(event)) return;
+      const callback = sessionCallbacks.get(event.sessionId);
+      if (["done", "error"].includes(event.eventType)) sessionCallbacks.delete(event.sessionId);
+      try { await callback?.(event); } catch (cause) { logger(`SPS session callback failed: ${toError(cause).message}`); }
+      return;
+    }
     if (message.method !== "onEvent") {
       logger(`SPS Worker ignored unsupported Host notification: ${String(message.method)}.`);
       return;

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { inspectSpsExtensionProfileV2, SPS_CORE_PRIMITIVES } from "./extension-profile-v2.mjs";
+import { inspectSpsExtensionProfileV2, SPS_CORE_PRIMITIVES, SPS_EXECUTIONS_OBSERVE_REQUIRED_CAPABILITY } from "./extension-profile-v2.mjs";
 
 test("accepts a workplane without Paperclip task or session assumptions", () => {
   const result = inspectSpsExtensionProfileV2({
@@ -16,19 +16,23 @@ test("accepts a workplane without Paperclip task or session assumptions", () => 
         "workspace.sources.route",
         "runtimes.list",
         "runtimes.dispatch",
+        "executions.observe",
         "runs.observe",
+        "runs.cancel",
       ],
     },
   });
 
   assert.equal(result.valid, true, result.errors.join("\n"));
-  assert.deepEqual(result.features, ["workspace_source", "runtime", "run_observability"]);
+  assert.deepEqual(result.features, ["workspace_source", "runtime", "execution_observability", "run_observability"]);
   assert.deepEqual(result.corePrimitives, [
     "workspace.sources.metadata",
     "workspace.sources.route",
     "runtimes.list",
     "runtimes.dispatch",
+    "executions.observe",
     "runs.observe",
+    "runs.cancel",
   ]);
 });
 
@@ -60,14 +64,39 @@ test("rejects invalid primitive dependencies", () => {
   assert.ok(result.errors.includes("workspace.sources.route requires workspace.sources.metadata."));
 });
 
+test("rejects non-string SPS primitives instead of silently filtering them", () => {
+  const invalidPrimitiveLists = [
+    [{ name: "runtimes.dispatch" }],
+    [null],
+    [42],
+    ["workspace.sources.metadata", { name: "runtimes.dispatch" }],
+  ];
+
+  for (const primitives of invalidPrimitiveLists) {
+    const result = inspectSpsExtensionProfileV2({
+      id: "com.example.invalid-primitives",
+      version: "1.0.0",
+      entrypoints: { worker: "./dist/worker.js" },
+      capabilities: ["agent.tools.register"],
+      sps: { contractVersion: "2.0", primitives },
+    });
+
+    assert.equal(result.valid, false);
+    assert.ok(result.errors.includes("SPS Core primitives must contain only strings."));
+  }
+});
+
 test("exports the public, finite primitive vocabulary", () => {
   assert.deepEqual(SPS_CORE_PRIMITIVES, [
     "workspace.sources.metadata",
     "workspace.sources.route",
     "runtimes.list",
     "runtimes.dispatch",
+    "executions.observe",
     "runs.observe",
+    "runs.cancel",
     "artifacts.write",
     "secrets.use",
   ]);
+  assert.equal(SPS_EXECUTIONS_OBSERVE_REQUIRED_CAPABILITY, "sps.executions.read");
 });
