@@ -74,7 +74,12 @@ export interface SpsAgentSessionClient {
     create(agentId: string, companyId: string, options?: { taskKey?: string; reason?: string }): Promise<{ sessionId: string }>;
     ensure(agentId: string, companyId: string, options: { taskKey: string; expectedSessionId?: string }): Promise<{ sessionId: string; created: boolean }>;
     list(agentId: string, companyId: string): Promise<Array<Record<string, JsonValue>>>;
-    sendMessage(sessionId: string, companyId: string, options: { prompt: string; reason?: string; onEvent?: (event: Record<string, JsonValue>) => void }): Promise<{ runId: string }>;
+    sendMessage(sessionId: string, companyId: string, options: { prompt: string; reason?: string; requestId?: string; onEvent?: (event: Record<string, JsonValue>) => void }): Promise<{ runId: string }>;
+    getRequest(sessionId: string, companyId: string, requestId: string): Promise<null | {
+      requestId: string;
+      state: "pending" | "submitted" | "uncertain";
+      runId: string | null;
+    }>;
     getRun(sessionId: string, companyId: string, runId: string): Promise<SpsAgentSessionRunResult>;
     cancel(sessionId: string, companyId: string, runId: string): Promise<SpsAgentSessionRunResult>;
   };

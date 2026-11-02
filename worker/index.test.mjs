@@ -205,6 +205,170 @@ test("Agent session run methods enforce their dedicated capabilities and invocat
   }
 });
 
+test("Agent session request identity is forwarded and request lookup is read-scoped", async () => {
+  const requestId = "AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA";
+  const submitted = { requestId: requestId.toLowerCase(), state: "submitted", runId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc" };
+  const { input, lines, worker } = createHarness(defineSpsPlugin({ platform: defineSpsPlatformContract({
+    capabilities: ["agent.sessions.send", "agent.sessions.read"],
+    actions: [{ key: "requests", handler: async (_params, context) => ({
+      legacy: await context.agents.sessions.sendMessage("session-1", "company-1", { prompt: "legacy prompt" }),
+      retried: await context.agents.sessions.sendMessage("session-1", "company-1", {
+        prompt: "retry prompt", reason: "retry after reconnect", requestId,
+      }),
+      found: await context.agents.sessions.getRequest("session-1", "company-1", requestId),
+      missing: await context.agents.sessions.getRequest("session-1", "company-1", "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"),
+    }) }],
+  }) }));
+  input.write(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: {} }) + "\n");
+  await eventually(() => lines.length === 1);
+  input.write(JSON.stringify({
+    jsonrpc: "2.0", id: 2, method: "performAction",
+    paperclipInvocation: { id: "inv-requests", scope: { companyId: "company-1" } },
+    params: { key: "requests", companyId: "company-1", params: {}, actorContext: { type: "user", companyId: "company-1" } },
+  }) + "\n");
+
+  const expected = [
+    { method: "agents.sessions.sendMessage", params: { sessionId: "session-1", companyId: "company-1", prompt: "legacy prompt" } },
+    { method: "agents.sessions.sendMessage", params: { sessionId: "session-1", companyId: "company-1", prompt: "retry prompt", reason: "retry after reconnect", requestId: requestId.toLowerCase() } },
+    { method: "agents.sessions.getRequest", params: { sessionId: "session-1", companyId: "company-1", requestId: requestId.toLowerCase() } },
+    { method: "agents.sessions.getRequest", params: { sessionId: "session-1", companyId: "company-1", requestId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb" } },
+  ];
+  const responses = [{ runId: "run-legacy" }, { runId: "run-retry" }, submitted, null];
+  for (let index = 0; index < expected.length; index += 1) {
+    await eventually(() => lines.length === index + 2);
+    assert.deepEqual(lines[index + 1], {
+      jsonrpc: "2.0", id: `sps-${index + 1}`, ...expected[index], paperclipInvocationId: "inv-requests",
+    });
+    input.write(JSON.stringify({ jsonrpc: "2.0", id: `sps-${index + 1}`, result: responses[index] }) + "\n");
+  }
+  await eventually(() => lines.length === 6);
+  assert.deepEqual(lines[5], {
+    jsonrpc: "2.0", id: 2,
+    result: {
+      legacy: { runId: "run-legacy" },
+      retried: { runId: "run-retry" },
+      found: submitted,
+      missing: null,
+    },
+  });
+  input.end();
+  await worker.closed;
+});
+
+test("Agent session request lookup requires read capability and the invocation company", async () => {
+  const scenarios = [
+    { capabilities: ["agent.sessions.send"], companyId: "company-1", expected: /Undeclared.*agent\.sessions\.read/ },
+    { capabilities: ["agent.sessions.read"], companyId: "company-2", expected: /authenticated invocation company/ },
+  ];
+  for (const [index, scenario] of scenarios.entries()) {
+    const { input, lines, worker } = createHarness(defineSpsPlugin({ platform: defineSpsPlatformContract({
+      capabilities: scenario.capabilities,
+      actions: [{ key: "lookup", handler: (_params, context) => context.agents.sessions.getRequest(
+        "session-1", scenario.companyId, "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      ) }],
+    }) }));
+    input.write(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: {} }) + "\n");
+    await eventually(() => lines.length === 1);
+    input.write(JSON.stringify({
+      jsonrpc: "2.0", id: 2, method: "performAction",
+      paperclipInvocation: { id: `inv-request-scope-${index}`, scope: { companyId: "company-1" } },
+      params: { key: "lookup", companyId: "company-1", params: {}, actorContext: { type: "user", companyId: "company-1" } },
+    }) + "\n");
+    await eventually(() => lines.length === 2);
+    assert.match(lines[1].error.message, scenario.expected);
+    assert.equal(lines.some(line => line.method === "agents.sessions.getRequest"), false);
+    input.end();
+    await worker.closed;
+  }
+});
+
+test("Agent session request IDs and send options are validated before Host calls", async () => {
+  const invalidRequestIds = ["", "not-a-uuid", null, 7];
+  const { input, lines, worker } = createHarness(defineSpsPlugin({ platform: defineSpsPlatformContract({
+    capabilities: ["agent.sessions.send", "agent.sessions.read"],
+    actions: [{ key: "invalid", handler: async (_params, context) => {
+      const errors = [];
+      for (const requestId of invalidRequestIds) {
+        try {
+          await context.agents.sessions.sendMessage("session-1", "company-1", { prompt: "hello", requestId });
+        } catch (cause) { errors.push(cause.message); }
+        try {
+          await context.agents.sessions.getRequest("session-1", "company-1", requestId);
+        } catch (cause) { errors.push(cause.message); }
+      }
+      try {
+        await context.agents.sessions.sendMessage("session-1", "company-1", { prompt: "hello", unsupported: true });
+      } catch (cause) { errors.push(cause.message); }
+      return errors;
+    } }],
+  }) }));
+  input.write(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: {} }) + "\n");
+  await eventually(() => lines.length === 1);
+  input.write(JSON.stringify({
+    jsonrpc: "2.0", id: 2, method: "performAction",
+    paperclipInvocation: { id: "inv-invalid-request-id", scope: { companyId: "company-1" } },
+    params: { key: "invalid", companyId: "company-1", params: {}, actorContext: { type: "user", companyId: "company-1" } },
+  }) + "\n");
+  await eventually(() => lines.length === 2);
+  assert.equal(lines[1].method, undefined);
+  assert.equal(lines[1].result.length, 9);
+  assert.equal(lines[1].result.filter(message => /canonical UUID/.test(message)).length, 4);
+  assert.match(lines[1].result[8], /only prompt, reason, requestId, onEvent/);
+  assert.equal(lines.some(line => line.method?.startsWith("agents.sessions.")), false);
+  input.end();
+  await worker.closed;
+});
+
+test("Agent session request lookup validates exact response fields and fails closed on older Hosts", async () => {
+  const requestId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+  for (const [index, result] of [
+    { requestId, state: "unknown", runId: null },
+    { requestId, state: "pending", runId: null, extra: true },
+    { requestId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", state: "uncertain", runId: null },
+    { requestId, state: "pending", runId: {} },
+    { requestId, state: "submitted", runId: null },
+    { requestId, state: "uncertain", runId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc" },
+  ].entries()) {
+    const { input, lines, worker } = createHarness(defineSpsPlugin({ platform: defineSpsPlatformContract({
+      capabilities: ["agent.sessions.read"],
+      actions: [{ key: "lookup", handler: (_params, context) => context.agents.sessions.getRequest("session-1", "company-1", requestId) }],
+    }) }));
+    input.write(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: {} }) + "\n");
+    await eventually(() => lines.length === 1);
+    input.write(JSON.stringify({
+      jsonrpc: "2.0", id: 2, method: "performAction",
+      paperclipInvocation: { id: `inv-request-result-${index}`, scope: { companyId: "company-1" } },
+      params: { key: "lookup", companyId: "company-1", params: {}, actorContext: { type: "user", companyId: "company-1" } },
+    }) + "\n");
+    await eventually(() => lines.length === 2);
+    input.write(JSON.stringify({ jsonrpc: "2.0", id: lines[1].id, result }) + "\n");
+    await eventually(() => lines.length === 3);
+    assert.match(lines[2].error.message, /agent session request result/);
+    input.end();
+    await worker.closed;
+  }
+
+  const { input, lines, worker } = createHarness(defineSpsPlugin({ platform: defineSpsPlatformContract({
+    capabilities: ["agent.sessions.read"],
+    actions: [{ key: "lookup", handler: (_params, context) => context.agents.sessions.getRequest("session-1", "company-1", requestId) }],
+  }) }));
+  input.write(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: {} }) + "\n");
+  await eventually(() => lines.length === 1);
+  input.write(JSON.stringify({
+    jsonrpc: "2.0", id: 2, method: "performAction",
+    paperclipInvocation: { id: "inv-old-request-host", scope: { companyId: "company-1" } },
+    params: { key: "lookup", companyId: "company-1", params: {}, actorContext: { type: "user", companyId: "company-1" } },
+  }) + "\n");
+  await eventually(() => lines.length === 2);
+  assert.equal(lines[1].method, "agents.sessions.getRequest");
+  input.write(JSON.stringify({ jsonrpc: "2.0", id: lines[1].id, error: { code: -32601, message: "Method not found" } }) + "\n");
+  await eventually(() => lines.length === 3);
+  assert.deepEqual(lines[2].error, { code: -32601, message: "Method not found" });
+  assert.deepEqual(lines.filter(line => line.method?.startsWith("agents.sessions.")).map(line => line.method), ["agents.sessions.getRequest"]);
+  input.end();
+  await worker.closed;
+});
+
 test("Agent session ensure uses the create capability and sends only the explicit ensure RPC", async () => {
   const recovered = { sessionId: "77777777-7777-4777-8777-777777777777", created: false };
   const created = { sessionId: "session-new", created: true };

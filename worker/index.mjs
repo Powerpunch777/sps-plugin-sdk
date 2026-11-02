@@ -12,6 +12,7 @@ const PLATFORM_AGENT_OPERATIONS = Object.freeze({
   "agents.sessions.ensure": "agent.sessions.create",
   "agents.sessions.list": "agent.sessions.list",
   "agents.sessions.sendMessage": "agent.sessions.send",
+  "agents.sessions.getRequest": "agent.sessions.read",
   "agents.sessions.getRun": "agent.sessions.read",
   "agents.sessions.cancel": "agent.sessions.cancel",
 });
@@ -33,6 +34,7 @@ const EXECUTION_READ_OPERATIONS = new Set(["sps.executions.list", "sps.execution
 const JSON_RPC_VERSION = "2.0";
 const SURFACE_ID_RE = /^[a-z0-9][a-z0-9._-]*$/;
 const MODEL_UUID_RE = /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i;
+const SESSION_REQUEST_ID_RE = /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i;
 const MODEL_REQUEST_KEY_RE = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 const MODEL_INPUT_MAX_BYTES = 65_536;
 
@@ -51,6 +53,23 @@ function exactPlainDataRecord(value, label, allowedKeys) {
   }
   const result = Object.create(null);
   for (const key of keys) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    if (!descriptor?.enumerable || !("value" in descriptor)) {
+      throw new TypeError(`${label}.${key} must be an enumerable own data property.`);
+    }
+    result[key] = descriptor.value;
+  }
+  return result;
+}
+
+function allowedPlainDataRecord(value, label, allowedKeys) {
+  if (!isRecord(value)) throw new TypeError(`${label} must be a plain object.`);
+  const prototype = Object.getPrototypeOf(value);
+  if (prototype !== Object.prototype && prototype !== null) throw new TypeError(`${label} must be a plain object.`);
+  const allowed = new Set(allowedKeys);
+  const result = Object.create(null);
+  for (const key of Reflect.ownKeys(value)) {
+    if (typeof key !== "string" || !allowed.has(key)) throw new TypeError(`${label} must contain only ${allowedKeys.join(", ")}.`);
     const descriptor = Object.getOwnPropertyDescriptor(value, key);
     if (!descriptor?.enumerable || !("value" in descriptor)) {
       throw new TypeError(`${label}.${key} must be an enumerable own data property.`);
@@ -316,6 +335,12 @@ export function runSpsWorker(plugin, options = {}) {
     }
     return value;
   }
+  function assertSessionRequestId(value, label = "requestId") {
+    if (typeof value !== "string" || value.length !== 36 || !SESSION_REQUEST_ID_RE.test(value)) {
+      throw new TypeError(`${label} must be a canonical UUID.`);
+    }
+    return value.toLowerCase();
+  }
   function withAgentTenant(companyId, handler) {
     const invocationCompanyId = invocationStorage.getStore()?.scope?.companyId;
     return agentTenantStorage.run({ companyId, invocationCompanyId }, handler);
@@ -345,10 +370,52 @@ export function runSpsWorker(plugin, options = {}) {
         },
         list(agentId, companyId) { return agentRequest("agents.sessions.list", { agentId, companyId }); },
         async sendMessage(sessionId, companyId, options) {
-          if (options.onEvent) sessionCallbacks.set(sessionId, options.onEvent);
+          let input;
           try {
-            return await agentRequest("agents.sessions.sendMessage", { sessionId, companyId, prompt: options.prompt, ...(options.reason ? { reason: options.reason } : {}) });
+            input = allowedPlainDataRecord(options, "agent session sendMessage options", ["prompt", "reason", "requestId", "onEvent"]);
+            if (input.requestId !== undefined && (typeof input.prompt !== "string" || !input.prompt.trim()
+                || Buffer.byteLength(input.prompt, "utf8") > 48 * 1024 || /[\u0000\ufffd]/u.test(input.prompt)
+                || input.reason !== undefined && (typeof input.reason !== "string" || Buffer.byteLength(input.reason, "utf8") > 1_024
+                  || /[\u0000-\u001f\u007f\ufffd]/u.test(input.reason))
+                || typeof input.requestId !== "string" || !SESSION_REQUEST_ID_RE.test(input.requestId))
+              || (input.onEvent !== undefined && typeof input.onEvent !== "function")) {
+              throw new TypeError("Invalid agent session sendMessage options.");
+            }
+          } catch (cause) {
+            return Promise.reject(cause);
+          }
+          if (input.onEvent) sessionCallbacks.set(sessionId, input.onEvent);
+          try {
+            return await agentRequest("agents.sessions.sendMessage", {
+              sessionId,
+              companyId,
+              prompt: input.prompt,
+              ...(input.reason ? { reason: input.reason } : {}),
+              ...(input.requestId === undefined ? {} : { requestId: assertSessionRequestId(input.requestId) }),
+            });
           } catch (error) { sessionCallbacks.delete(sessionId); throw error; }
+        },
+        getRequest(sessionId, companyId, requestId) {
+          try {
+            const params = {
+              sessionId: boundedAgentString(sessionId, "sessionId"),
+              companyId: boundedAgentString(companyId, "companyId"),
+              requestId: assertSessionRequestId(requestId),
+            };
+            return agentRequest("agents.sessions.getRequest", params, true).then((result) => {
+              if (result === null) return null;
+              const value = exactPlainDataRecord(result, "agent session request result", ["requestId", "state", "runId"]);
+              const returnedId = assertSessionRequestId(value.requestId, "result.requestId");
+              if (returnedId !== params.requestId || !["pending", "submitted", "uncertain"].includes(value.state)
+                || value.state === "submitted" && (typeof value.runId !== "string" || !SESSION_REQUEST_ID_RE.test(value.runId))
+                || value.state !== "submitted" && value.runId !== null) {
+                throw new TypeError("Invalid agent session request result.");
+              }
+              return { requestId: returnedId, state: value.state, runId: value.runId };
+            });
+          } catch (cause) {
+            return Promise.reject(cause);
+          }
         },
         getRun(sessionId, companyId, runId) { return agentRequest("agents.sessions.getRun", { sessionId, companyId, runId }, true); },
         cancel(sessionId, companyId, runId) { return agentRequest("agents.sessions.cancel", { sessionId, companyId, runId }, true); },

@@ -46,6 +46,21 @@ The invocation context also exposes the existing Core Agent session ABI:
   status, done, and error events through `onEvent`; terminal events release the
   callback. The dedicated Workspace worker lane does not provide that legacy
   raw event feed. Use explicit bounded `getRun` polling in that lane.
+- On a compatible development Host, an optional `options.requestId` UUID asks
+  for a durable dispatch receipt. Keep this ID with the exact session, prompt
+  and reason before sending. The SDK normalizes the UUID to lowercase. A keyed
+  prompt is limited to 48 KiB UTF-8; its optional reason to 1,024 UTF-8 bytes.
+  Reusing an ID with different input is rejected. Legacy unkeyed sends retain
+  their previous semantics and do not gain this guarantee.
+- `agents.sessions.getRequest(sessionId, companyId, requestId)` requires
+  `agent.sessions.read` and returns `null` or `{ requestId, state, runId }`.
+  `submitted` has a run UUID; `pending` and `uncertain` have `runId: null`.
+  This is at-most-once dispatch admission, not exactly-once provider execution.
+  A lost wakeup response can be reconciled from the scheduler's committed
+  receipt. A crash before acceptance may remain unresolved; neither the SDK nor
+  Host automatically replays it. A null lookup during an in-flight send is not
+  proof of no execution. Never substitute a new ID to work around uncertainty.
+  Missing support on an older Host is an explicit error, not a retry fallback.
 - `agents.sessions.getRun(sessionId, companyId, runId)` requires
   `agent.sessions.read` and returns the bounded run status and error fields.
   Its optional `execution` field carries the safe shared execution-history DTO
@@ -83,12 +98,14 @@ harness does not prove physical row deletion, database concurrency or
 cross-process recovery.
 
 On compatible development Hosts, the dedicated Workspace lane permits these
-six session methods only inside a current Host-issued invocation, fixed to
+seven session methods only inside a current Host-issued invocation, fixed to
 the exact Workspace and plugin. Core rechecks authority around awaited service
 work and before execution/cancellation mutations. `close`, global Agent
-mutation and arbitrary invocation remain unavailable. A message send still
-has no durable request-key/replay guarantee: do not automatically retry an
-ambiguous send or treat a timeout as evidence that execution never started.
+mutation and arbitrary invocation remain unavailable. Unkeyed messages still
+have no durable request-key/replay guarantee. Even keyed dispatches must query
+their receipt rather than automatically replaying an ambiguous send or treating
+a timeout as evidence that execution never started. Caller-owned conversation
+storage and the Host's dispatch receipt are separate contracts.
 Authority revocation while an admitted wakeup is awaiting may reject its response
 without undoing a queued/started run; the invocation check is not an ongoing
 provider execution lease or an automatic cancellation request.
