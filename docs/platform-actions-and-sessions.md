@@ -1,5 +1,10 @@
 # Platform UI Actions and Agent Sessions (Development)
 
+> **Design alignment, 2026-11-02:** [Core/Plugin baseline](core-plugin-design-baseline-2026-11-02.md).
+> Agent sessions and UI actions are optional technical capabilities, not a required
+> workflow, Builder, AI, common sidebar or Core Settings button. The implementation
+> contract below is unchanged; it does not prove the full OS/Preview/product target.
+
 This additive source API is under development; it is not part of published SDK
 0.11.0 or any published SDK tag. The `sessions.getRun` and `sessions.cancel`
 additions are available only to consumers pinned to a source revision that
