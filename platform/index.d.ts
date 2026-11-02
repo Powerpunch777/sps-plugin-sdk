@@ -98,7 +98,15 @@ export interface SpsActionContext extends SpsPlatformInvocationContext {
 }
 export interface DataRegistration { key: string; handler(params: JsonObject, platform: SpsPlatformInvocationContext): JsonValue | Promise<JsonValue>; }
 export interface ActionRegistration { key: string; handler(params: JsonObject, context: SpsActionContext): JsonValue | Promise<JsonValue>; }
-export interface ToolRunContext { agentId: string; runId: string; companyId: string; projectId: string; }
+export interface ToolRunContext {
+  agentId: string;
+  runId: string;
+  companyId: string;
+  projectId?: string;
+  /** Supplied by a supporting Host after verifying the active Plugin Agent
+   * session. A value in tool parameters is not a trusted session claim. */
+  sessionId?: string;
+}
 export interface ToolResult { content?: string; data?: JsonValue; error?: string; }
 export interface PluginJobContext {
   jobKey: string;
