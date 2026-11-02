@@ -6,6 +6,8 @@ export interface SpsPlatformInvocationContext {
   readonly state: {
     get(key: Record<string, unknown>): Promise<JsonValue | null>;
     set(key: Record<string, unknown>, value: JsonValue): Promise<void>;
+    /** Optional for older Hosts; company-scoped CAS requires both state capabilities and bounded JSON input. Host rejection is propagated without get/set emulation. */
+    compareAndSet?(key: Record<string, unknown>, expected: { exists: false } | { exists: true; value: JsonValue }, value: JsonValue): Promise<{ swapped: boolean }>;
     delete(key: Record<string, unknown>): Promise<void>;
   };
 }

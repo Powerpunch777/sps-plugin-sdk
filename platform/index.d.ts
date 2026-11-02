@@ -28,6 +28,14 @@ export interface SpsStateKey {
 export interface SpsPlatformStateClient {
   get(input: SpsStateKey): Promise<JsonValue | null>;
   set(input: SpsStateKey, value: JsonValue): Promise<void>;
+  /**
+   * Optional for older Hosts. Atomically compares and replaces company-scoped state;
+   * `{ exists: false }` matches absence, while `{ exists: true, value: null }` matches JSON null.
+   * Requires both state capabilities, a lowercase company UUID, keys/namespaces up to 256
+   * characters, JSON depth up to 64, 50,000 nodes, and a 262,144-byte serialized request.
+   * Host rejection is propagated; this method is never emulated with get/set.
+   */
+  compareAndSet?(input: SpsStateKey, expected: { exists: false } | { exists: true; value: JsonValue }, value: JsonValue): Promise<{ swapped: boolean }>;
   delete(input: SpsStateKey): Promise<void>;
 }
 export interface SpsAgentSessionRunResult {

@@ -26,7 +26,7 @@ const CONNECTIVITY_OPERATION_CAPABILITIES = Object.freeze({
   "sps.connectivity.current": "sps.connectivity.read",
 });
 const PLATFORM_HOST_OPERATIONS = new Set([
-  "state.get", "state.set", "state.delete", "events.emit", "events.subscribe",
+  "state.get", "state.set", "state.compareAndSet", "state.delete", "events.emit", "events.subscribe",
   "inbox.publish", "inbox.update", "inbox.withdraw",
   ...Object.keys(PLATFORM_AGENT_OPERATIONS),
 ]);
@@ -37,6 +37,45 @@ const MODEL_UUID_RE = /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i;
 const SESSION_REQUEST_ID_RE = /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i;
 const MODEL_REQUEST_KEY_RE = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 const MODEL_INPUT_MAX_BYTES = 65_536;
+const STATE_COMPARE_AND_SET_MAX_BYTES = 262_144;
+const STATE_COMPARE_AND_SET_MAX_DEPTH = 64;
+const STATE_COMPARE_AND_SET_MAX_NODES = 50_000;
+
+function snapshotJsonValue(value, label, budget, depth = 0, ancestors = new Set()) {
+  if (depth > STATE_COMPARE_AND_SET_MAX_DEPTH) throw new TypeError(`${label} exceeds the JSON depth limit of ${STATE_COMPARE_AND_SET_MAX_DEPTH}.`);
+  budget.nodes += 1;
+  if (budget.nodes > STATE_COMPARE_AND_SET_MAX_NODES) throw new TypeError(`${label} exceeds the JSON node limit of ${STATE_COMPARE_AND_SET_MAX_NODES}.`);
+  if (value === null || typeof value === "string" || typeof value === "boolean") return value;
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (!value || typeof value !== "object" || ancestors.has(value)) throw new TypeError(`${label} must be a finite, acyclic plain JSON value.`);
+  ancestors.add(value);
+  let snapshot;
+  if (Array.isArray(value)) {
+    if (Object.getPrototypeOf(value) !== Array.prototype) throw new TypeError(`${label} must be a finite, acyclic plain JSON value.`);
+    snapshot = [];
+    const keys = Reflect.ownKeys(value);
+    if (keys.length !== value.length + 1 || keys.some((key) => key !== "length" && (typeof key !== "string" || !/^(0|[1-9][0-9]*)$/.test(key) || Number(key) >= value.length))) {
+      throw new TypeError(`${label} must be a finite, acyclic plain JSON value.`);
+    }
+    for (let index = 0; index < value.length; index += 1) {
+      const descriptor = Object.getOwnPropertyDescriptor(value, String(index));
+      if (!descriptor?.enumerable || !("value" in descriptor)) throw new TypeError(`${label} must be a finite, acyclic plain JSON value.`);
+      snapshot.push(snapshotJsonValue(descriptor.value, label, budget, depth + 1, ancestors));
+    }
+  } else {
+    const prototype = Object.getPrototypeOf(value);
+    if (prototype !== Object.prototype && prototype !== null) throw new TypeError(`${label} must be a finite, acyclic plain JSON value.`);
+    snapshot = Object.create(null);
+    for (const key of Reflect.ownKeys(value)) {
+      if (typeof key !== "string") throw new TypeError(`${label} must be a finite, acyclic plain JSON value.`);
+      const descriptor = Object.getOwnPropertyDescriptor(value, key);
+      if (!descriptor?.enumerable || !("value" in descriptor)) throw new TypeError(`${label}.${key} must be an enumerable own data property.`);
+      snapshot[key] = snapshotJsonValue(descriptor.value, label, budget, depth + 1, ancestors);
+    }
+  }
+  ancestors.delete(value);
+  return snapshot;
+}
 
 function isRecord(value) {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
@@ -57,6 +96,21 @@ function exactPlainDataRecord(value, label, allowedKeys) {
     if (!descriptor?.enumerable || !("value" in descriptor)) {
       throw new TypeError(`${label}.${key} must be an enumerable own data property.`);
     }
+    result[key] = descriptor.value;
+  }
+  return result;
+}
+
+function optionalPlainDataRecord(value, label, allowedKeys) {
+  if (!isRecord(value)) throw new TypeError(`${label} must be a plain object.`);
+  const prototype = Object.getPrototypeOf(value);
+  if (prototype !== Object.prototype && prototype !== null) throw new TypeError(`${label} must be a plain object.`);
+  const allowed = new Set(allowedKeys);
+  const result = Object.create(null);
+  for (const key of Reflect.ownKeys(value)) {
+    if (typeof key !== "string" || !allowed.has(key)) throw new TypeError(`${label} must contain only ${allowedKeys.join(", ")}.`);
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    if (!descriptor?.enumerable || !("value" in descriptor)) throw new TypeError(`${label}.${key} must be an enumerable own data property.`);
     result[key] = descriptor.value;
   }
   return result;
@@ -434,6 +488,60 @@ export function runSpsWorker(plugin, options = {}) {
       set(key, value) {
         if (!isJsonValue(value)) return Promise.reject(new TypeError("SPS Platform state values must be JSON-serializable."));
         return callHost("state.set", { ...validateStateKey(key), value });
+      },
+      async compareAndSet(key, expected, value) {
+        const capabilities = definition.handlers.platform?.capabilities ?? [];
+        for (const capability of ["plugin.state.read", "plugin.state.write"]) {
+          if (!capabilities.includes(capability)) throw new Error(`Undeclared SPS Platform capability: ${capability}.`);
+        }
+        if (lifecycleState !== "ready") throw new Error("SPS Platform state access requires an authenticated invocation company.");
+
+        const invocation = invocationStorage.getStore();
+        if (typeof invocation?.scope?.companyId !== "string") throw new Error("SPS Platform state access requires an authenticated invocation company.");
+        const invocationCompanyId = normalizeModelUuid(invocation.scope.companyId, "authenticated invocation company");
+        const tenant = agentTenantStorage.getStore();
+        const tenantCompanyId = typeof tenant?.companyId === "string"
+          ? normalizeModelUuid(tenant.companyId, "invocation tenant company")
+          : invocationCompanyId;
+        const tenantInvocationCompanyId = typeof tenant?.invocationCompanyId === "string"
+          ? normalizeModelUuid(tenant.invocationCompanyId, "authenticated invocation company")
+          : invocationCompanyId;
+
+        const keyInput = optionalPlainDataRecord(key, "state key", ["scopeKind", "scopeId", "namespace", "stateKey"]);
+        const normalizedKey = validateStateKey(keyInput);
+        if (normalizedKey.scopeKind !== "company" || typeof normalizedKey.scopeId !== "string") {
+          throw new TypeError("SPS Platform state compareAndSet supports only company-scoped keys with a canonical UUID scopeId.");
+        }
+        const canonicalScopeId = normalizeModelUuid(normalizedKey.scopeId, "state key scopeId");
+        if (canonicalScopeId !== normalizedKey.scopeId) throw new TypeError("state key scopeId must be a lowercase canonical UUID.");
+        if (normalizedKey.stateKey.trim().length === 0 || normalizedKey.namespace !== undefined && normalizedKey.namespace.trim().length === 0) {
+          throw new TypeError("SPS Platform state key and namespace must not be empty or whitespace.");
+        }
+        if (normalizedKey.stateKey.length > 256 || normalizedKey.namespace !== undefined && normalizedKey.namespace.length > 256) {
+          throw new TypeError("SPS Platform state key and namespace must be at most 256 characters.");
+        }
+        if (normalizedKey.scopeId !== invocationCompanyId || tenantCompanyId !== invocationCompanyId || tenantInvocationCompanyId !== invocationCompanyId) {
+          throw new Error("SPS Platform state access must match the authenticated invocation company.");
+        }
+
+        const expectedInput = optionalPlainDataRecord(expected, "state expected value", ["exists", "value"]);
+        let normalizedExpected;
+        const jsonBudget = { nodes: 0 };
+        if (expectedInput.exists === false && Object.keys(expectedInput).length === 1) {
+          normalizedExpected = { exists: false };
+        } else if (expectedInput.exists === true && Object.hasOwn(expectedInput, "value")) {
+          normalizedExpected = { exists: true, value: snapshotJsonValue(expectedInput.value, "state expected value", jsonBudget) };
+        } else {
+          throw new TypeError("state expected value must be { exists: false } or { exists: true, value }.");
+        }
+        const normalizedValue = snapshotJsonValue(value, "SPS Platform state value", jsonBudget);
+        const params = { ...normalizedKey, expected: normalizedExpected, value: normalizedValue };
+        if (new TextEncoder().encode(JSON.stringify(params)).byteLength > STATE_COMPARE_AND_SET_MAX_BYTES) {
+          throw new TypeError("SPS Platform state compareAndSet payload must be at most 262144 UTF-8 bytes.");
+        }
+        const result = exactPlainDataRecord(await callHost("state.compareAndSet", params), "state compareAndSet result", ["swapped"]);
+        if (typeof result.swapped !== "boolean") throw new TypeError("SPS Host returned an invalid state compareAndSet result.");
+        return { swapped: result.swapped };
       },
       delete(key) { return callHost("state.delete", validateStateKey(key)); },
     }),

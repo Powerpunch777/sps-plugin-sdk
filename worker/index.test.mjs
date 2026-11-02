@@ -949,6 +949,115 @@ test("input stream closure rejects a pending Runtime request without leaving Wor
   await worker.closed;
 });
 
+test("state.compareAndSet forwards bounded company-scoped JSON once and enforces its result and capabilities", async () => {
+  const companyId = "11111111-aaaa-4111-8111-111111111111";
+  const key = { scopeKind: "company", scopeId: companyId, namespace: "settings", stateKey: "nullable" };
+
+  async function invoke({ key: requestKey = key, expected, value, capabilities = ["plugin.state.read", "plugin.state.write"], response, hostError, responseLoss } = {}) {
+    const platform = defineSpsPlatformContract({
+      capabilities,
+      tools: [{ name: "cas", declaration: { displayName: "CAS", description: "CAS", parametersSchema: {} },
+        handler: (_params, _context, api) => api.state.compareAndSet(requestKey, expected, value) }],
+    });
+    const { input, lines, logs, worker } = createHarness(defineSpsPlugin({ platform }));
+    input.write('{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}\n');
+    await eventually(() => lines.length === 1);
+    input.write(JSON.stringify({
+      jsonrpc: "2.0", id: 2, method: "executeTool",
+      paperclipInvocation: { id: "invocation-1", scope: { companyId } },
+      params: { toolName: "cas", parameters: {}, runContext: { companyId } },
+    }) + "\n");
+    await eventually(() => lines.length >= 2);
+    if (lines[1].method === "state.compareAndSet") {
+      if (responseLoss) {
+        input.end();
+        await worker.closed;
+        await eventually(() => logs.length > 0);
+        return { lines, logs };
+      }
+      if (hostError) input.write(JSON.stringify({ jsonrpc: "2.0", id: lines[1].id, error: hostError }) + "\n");
+      else input.write(JSON.stringify({ jsonrpc: "2.0", id: lines[1].id, result: response }) + "\n");
+      await eventually(() => lines.length === 3);
+    }
+    input.end();
+    await worker.closed;
+    return { lines, logs };
+  }
+
+  for (const swapped of [true, false]) {
+    const { lines } = await invoke({ expected: { exists: false }, value: null, response: { swapped } });
+    assert.equal(lines[1].method, "state.compareAndSet", JSON.stringify(lines));
+    assert.deepEqual(lines[1].params, { ...key, expected: { exists: false }, value: null });
+    assert.deepEqual(lines[2].result, { swapped });
+  }
+  const { lines: existingNull } = await invoke({ expected: { exists: true, value: null }, value: { next: null }, response: { swapped: true } });
+  assert.deepEqual(existingNull[1].params.expected, { exists: true, value: null });
+  assert.deepEqual(existingNull[1].params.value, { next: null });
+
+  for (const expected of [
+    { exists: false, value: null },
+    { exists: true },
+    { exists: true, value: null, extra: true },
+  ]) {
+    const { lines } = await invoke({ expected, value: null });
+    assert.equal(lines.length, 2);
+    assert.ok(lines[1].error);
+  }
+  const { lines: unknownKeyField } = await invoke({ key: { ...key, unexpected: true }, expected: { exists: false }, value: null });
+  assert.equal(unknownKeyField.length, 2);
+  assert.ok(unknownKeyField[1].error);
+  const getterExpected = Object.defineProperty({}, "exists", { enumerable: true, get() { throw new Error("must not run"); } });
+  const { lines: accessorInput } = await invoke({ expected: getterExpected, value: null });
+  assert.equal(accessorInput.length, 2);
+  assert.ok(accessorInput[1].error);
+  const getterKey = Object.defineProperty({ scopeKind: "company", namespace: "settings", stateKey: "nullable" }, "scopeId", {
+    enumerable: true, get() { throw new Error("must not run"); },
+  });
+  const { lines: accessorKey } = await invoke({ key: getterKey, expected: { exists: false }, value: null });
+  assert.equal(accessorKey.length, 2);
+  assert.ok(accessorKey[1].error);
+  const { lines: uppercaseUuid } = await invoke({ key: { ...key, scopeId: companyId.toUpperCase() }, expected: { exists: false }, value: null, response: { swapped: true } });
+  assert.equal(uppercaseUuid.length, 2);
+  assert.match(uppercaseUuid[1].error.message, /lowercase canonical UUID/);
+  const { lines: tooLongKey } = await invoke({ key: { ...key, stateKey: "x".repeat(257) }, expected: { exists: false }, value: null });
+  assert.equal(tooLongKey.length, 2);
+  assert.match(tooLongKey[1].error.message, /at most 256 characters/);
+  const { lines: whitespaceKey } = await invoke({ key: { ...key, namespace: " \t " }, expected: { exists: false }, value: null });
+  assert.equal(whitespaceKey.length, 2);
+  assert.match(whitespaceKey[1].error.message, /must not be empty or whitespace/);
+  let deeplyNested = null;
+  for (let index = 0; index < 65; index += 1) deeplyNested = { child: deeplyNested };
+  const { lines: deepValue } = await invoke({ expected: { exists: false }, value: deeplyNested });
+  assert.equal(deepValue.length, 2);
+  assert.match(deepValue[1].error.message, /depth limit of 64/);
+  const { lines: tooManyNodes } = await invoke({ expected: { exists: true, value: new Array(25_000).fill(null) }, value: new Array(25_000).fill(null) });
+  assert.equal(tooManyNodes.length, 2);
+  assert.match(tooManyNodes[1].error.message, /node limit of 50000/);
+  const { lines: oversized } = await invoke({ expected: { exists: false }, value: "x".repeat(262_144) });
+  assert.equal(oversized.length, 2);
+  assert.match(oversized[1].error.message, /262144 UTF-8 bytes/);
+  for (const capabilities of [["plugin.state.read"], ["plugin.state.write"]]) {
+    const { lines } = await invoke({ expected: { exists: false }, value: null, capabilities });
+    assert.equal(lines.length, 2);
+    assert.match(lines[1].error.message, /Undeclared SPS Platform capability/);
+  }
+  for (const response of [{ swapped: 1 }, { swapped: true, extra: false }, null]) {
+    const { lines } = await invoke({ expected: { exists: false }, value: null, response });
+    assert.equal(lines.length, 3);
+    assert.ok(lines[2].error);
+  }
+  const { lines: rejectedHostCall } = await invoke({
+    expected: { exists: false }, value: null,
+    hostError: { code: -32601, message: "Unknown Host method" },
+  });
+  assert.equal(rejectedHostCall.filter((line) => line.method === "state.compareAndSet").length, 1);
+  assert.equal(rejectedHostCall.length, 3);
+  assert.equal(rejectedHostCall[2].error.message, "Unknown Host method");
+  const lostResponse = await invoke({ expected: { exists: false }, value: null, responseLoss: true });
+  assert.equal(lostResponse.lines.filter((line) => line.method === "state.compareAndSet").length, 1);
+  assert.ok(lostResponse.logs.some((message) => /transport is closed/.test(message)));
+});
+
 test("declared platform registers events, dispatches tool/event/job handlers, and bridges state and events without capability gating", async () => {
   const calls = [];
   const platform = defineSpsPlatformContract({
